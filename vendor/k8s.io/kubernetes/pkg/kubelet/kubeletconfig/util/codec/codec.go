@@ -17,14 +17,15 @@ limitations under the License.
 package codec
 
 import (
+	"encoding/json"
 	"fmt"
 
-	"github.com/pkg/errors"
 	"k8s.io/klog/v2"
 
 	// ensure the core apis are installed
 	_ "k8s.io/kubernetes/pkg/apis/core/install"
 
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/runtime/serializer"
@@ -76,7 +77,7 @@ func DecodeKubeletConfiguration(kubeletCodecs *serializer.CodecFactory, data []b
 		// decoder, which has only v1beta1 registered, and log a warning.
 		// The lenient path is to be dropped when support for v1beta1 is dropped.
 		if !runtime.IsStrictDecodingError(err) {
-			return nil, errors.Wrap(err, "failed to decode")
+			return nil, fmt.Errorf("failed to decode: %w", err)
 		}
 
 		var lenientErr error
@@ -105,4 +106,17 @@ func DecodeKubeletConfiguration(kubeletCodecs *serializer.CodecFactory, data []b
 	}
 
 	return internalKC, nil
+}
+
+// DecodeKubeletConfigurationIntoJSON decodes a serialized KubeletConfiguration to the internal type.
+func DecodeKubeletConfigurationIntoJSON(kubeletCodecs *serializer.CodecFactory, data []byte) ([]byte, error) {
+	// The UniversalDecoder runs defaulting and returns the internal type by default.
+	obj, _, err := kubeletCodecs.UniversalDecoder().Decode(data, nil, &unstructured.Unstructured{})
+	if err != nil {
+		return nil, err
+	}
+
+	objT := obj.(*unstructured.Unstructured)
+
+	return json.Marshal(objT.Object)
 }

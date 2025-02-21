@@ -21,7 +21,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 
 	cmdcommon "github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/util"
@@ -37,7 +36,6 @@ type Configuration struct {
 	// eg. cloud/edge
 	Part string
 
-	RuntimeType           string
 	RemoteRuntimeEndpoint string
 }
 
@@ -45,7 +43,6 @@ func newDefaultConfiguration() *Configuration {
 	return &Configuration{
 		ImageRepository: "kubeedge",
 		Part:            "",
-		RuntimeType:     kubetypes.DockerContainerRuntime,
 	}
 }
 
@@ -120,7 +117,7 @@ func newCmdConfigImagesPull() *cobra.Command {
 			cfg.KubeEdgeVersion = ver
 
 			images := GetKubeEdgeImages(cfg)
-			return pullImages(cfg.RuntimeType, cfg.RemoteRuntimeEndpoint, images)
+			return pullImages(cfg.RemoteRuntimeEndpoint, "", images)
 		},
 		Args: cobra.NoArgs,
 	}
@@ -129,8 +126,8 @@ func newCmdConfigImagesPull() *cobra.Command {
 	return cmd
 }
 
-func pullImages(runtimeType string, endpoint string, images []string) error {
-	runtime, err := util.NewContainerRuntime(runtimeType, endpoint)
+func pullImages(endpoint, cgroupDriver string, images []string) error {
+	runtime, err := util.NewContainerRuntime(endpoint, cgroupDriver)
 	if err != nil {
 		return err
 	}
@@ -140,19 +137,16 @@ func pullImages(runtimeType string, endpoint string, images []string) error {
 
 // AddImagesCommonConfigFlags adds the flags that configure keadm
 func AddImagesCommonConfigFlags(cmd *cobra.Command, cfg *Configuration) {
-	cmd.Flags().StringVar(&cfg.KubeEdgeVersion, cmdcommon.KubeEdgeVersion, cfg.KubeEdgeVersion,
+	cmd.Flags().StringVar(&cfg.KubeEdgeVersion, cmdcommon.FlagNameKubeEdgeVersion, cfg.KubeEdgeVersion,
 		`Use this key to decide which a specific KubeEdge version to be used.`,
 	)
-	cmd.Flags().StringVar(&cfg.ImageRepository, cmdcommon.ImageRepository, cfg.ImageRepository,
+	cmd.Flags().StringVar(&cfg.ImageRepository, cmdcommon.FlagNameImageRepository, cfg.ImageRepository,
 		`Use this key to decide which image repository to pull images from.`,
 	)
 	cmd.Flags().StringVar(&cfg.Part, "part", cfg.Part,
 		"Use this key to set which part keadm will install: cloud part or edge part. If not set, keadm will list/pull all images used by both cloud part and edge part.")
 
-	cmd.Flags().StringVar(&cfg.RuntimeType, cmdcommon.RuntimeType, cfg.RuntimeType,
-		"Container runtime type, default is docker")
-
-	cmd.Flags().StringVar(&cfg.RemoteRuntimeEndpoint, cmdcommon.RemoteRuntimeEndpoint, cfg.RemoteRuntimeEndpoint,
+	cmd.Flags().StringVar(&cfg.RemoteRuntimeEndpoint, cmdcommon.FlagNameRemoteRuntimeEndpoint, cfg.RemoteRuntimeEndpoint,
 		"The endpoint of remote runtime service in edge node")
 }
 
@@ -163,11 +157,19 @@ func GetKubeEdgeImages(cfg *Configuration) []string {
 	case "cloud":
 		images = image.CloudSet(cfg.ImageRepository, cfg.KubeEdgeVersion).List()
 	case "edge":
-		images = image.EdgeSet(cfg.ImageRepository, cfg.KubeEdgeVersion).List()
+		images = image.EdgeSet(&cmdcommon.JoinOptions{
+			WithMQTT:        false,
+			KubeEdgeVersion: cfg.KubeEdgeVersion,
+			ImageRepository: cfg.ImageRepository,
+		}).List()
 	default:
 		// if not specified, will return all images used by both cloud part and edge part
 		cloudSet := image.CloudSet(cfg.ImageRepository, cfg.KubeEdgeVersion)
-		edgeSet := image.EdgeSet(cfg.ImageRepository, cfg.KubeEdgeVersion)
+		edgeSet := image.EdgeSet(&cmdcommon.JoinOptions{
+			WithMQTT:        false,
+			KubeEdgeVersion: cfg.KubeEdgeVersion,
+			ImageRepository: cfg.ImageRepository,
+		})
 		images = cloudSet.Merge(edgeSet).List()
 	}
 	return images

@@ -1,4 +1,28 @@
-
+* [v1.12.7](#v1127)
+    * [Downloads for v1.12.7](#downloads-for-v1127)
+    * [KubeEdge v1.12.7 Release Notes](#kubeedge-v1127-release-notes)
+        * [Changelog since v1.12.6](#changelog-since-v1126)
+* [v1.12.6](#v1126)
+    * [Downloads for v1.12.6](#downloads-for-v1126)
+    * [KubeEdge v1.12.6 Release Notes](#kubeedge-v1126-release-notes)
+        * [Changelog since v1.12.5](#changelog-since-v1125)
+* [v1.12.5](#v1125)
+    * [Downloads for v1.12.5](#downloads-for-v1125)
+    * [KubeEdge v1.12.5 Release Notes](#kubeedge-v1125-release-notes)
+        * [Changelog since v1.12.4](#changelog-since-v1124)
+* [v1.12.4](#v1124)
+    * [Downloads for v1.12.4](#downloads-for-v1124)
+    * [KubeEdge v1.12.4 Release Notes](#kubeedge-v1124-release-notes)
+        * [Changelog since v1.12.3](#changelog-since-v1123)
+* [v1.12.3](#v1123)
+    * [Downloads for v1.12.3](#downloads-for-v1123)
+    * [KubeEdge v1.12.3 Release Notes](#kubeedge-v1123-release-notes)
+        * [Changelog since v1.12.2](#changelog-since-v1122)
+        * [Important Steps before Upgrading](#important-steps-before-upgrading-for-1123)
+* [v1.12.2](#v1122)
+    * [Downloads for v1.12.2](#downloads-for-v1122)
+    * [KubeEdge v1.12.2 Release Notes](#kubeedge-v1122-release-notes)
+        * [Changelog since v1.12.1](#changelog-since-v1121)
 * [v1.12.1](#v1121)
     * [Downloads for v1.12.1](#downloads-for-v1121)
     * [KubeEdge v1.12.1 Release Notes](#kubeedge-v1121-release-notes)
@@ -10,7 +34,100 @@
         * [Important Steps before Upgrading](#important-steps-before-upgrading)
         * [Other Notable Changes](#other-notable-changes)
         * [Bug Fixes](#bug-fixes)
-    
+
+# v1.12.7
+
+## Downloads for v1.12.7
+
+Download v1.12.7 in the [v1.12.7 release page](https://github.com/kubeedge/kubeedge/releases/tag/v1.12.7).
+
+## KubeEdge v1.12.7 Release Notes
+
+### Changelog since v1.12.6
+
+- Fix featuregates didn't take effect in edged. ([#5298](https://github.com/kubeedge/kubeedge/pull/5298), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Supports installing edgecore without installing the CNI plugin. ([#5365](https://github.com/kubeedge/kubeedge/pull/5365), [@luomengY](https://github.com/luomengY))
+
+
+
+# v1.12.6
+
+## Downloads for v1.12.6
+
+Download v1.12.6 in the [v1.12.6 release page](https://github.com/kubeedge/kubeedge/releases/tag/v1.12.6).
+
+## KubeEdge v1.12.6 Release Notes
+
+### Changelog since v1.12.5
+
+- Resolve the deployment order dependency between mapper and device. ([#5150](https://github.com/kubeedge/kubeedge/pull/5150), [@luomengY](https://github.com/luomengY))
+- Fix copy resources from the image throws nil runtimg error. ([#5179](https://github.com/kubeedge/kubeedge/pull/5179), [@WillardHu](https://github.com/WillardHu))
+- Fix error logs when nodes repeatedly join different node groups. ([#5210](https://github.com/kubeedge/kubeedge/pull/5210), [@lishaokai1995](https://github.com/lishaokai1995), [@Onion-of-dreamed](https://github.com/Onion-of-dreamed))
+- Bump Kubernetes to the newest patch version 1.22.17. ([#5214](https://github.com/kubeedge/kubeedge/pull/5214), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Fix serviceaccount token not being deleted in edge DB. ([#5214](https://github.com/kubeedge/kubeedge/pull/5214), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+
+# v1.12.5
+
+## Downloads for v1.12.5
+
+Download v1.12.5 in the [v1.12.5 release page](https://github.com/kubeedge/kubeedge/releases/tag/v1.12.5).
+
+## KubeEdge v1.12.5 Release Notes
+
+### Changelog since v1.12.4
+
+- Fix upgrade time layout and lost time value issue. ([#5072](https://github.com/kubeedge/kubeedge/pull/5072), [@WillardHu](https://github.com/WillardHu))
+- Fix start edgecore failed when using systemd cgroupdriver. ([#5103](https://github.com/kubeedge/kubeedge/pull/5103), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Fix remove pod cache failed. ([#5106](https://github.com/kubeedge/kubeedge/pull/5106), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Fix Keadm process stops abnormally when Keadm upgrade stops edgecore process. ([#5108](https://github.com/kubeedge/kubeedge/pull/5108), [@wlq1212](https://github.com/wlq1212))
+- Fix mqtt container would not start when using custom registry. ([#5101](https://github.com/kubeedge/kubeedge/pull/5101), [@WillardHu](https://github.com/WillardHu))
+
+# v1.12.4
+
+## Downloads for v1.12.4
+
+Download v1.12.4 in the [v1.12.4 release page](https://github.com/kubeedge/kubeedge/releases/tag/v1.12.4).
+
+## KubeEdge v1.12.4 Release Notes
+
+### Changelog since v1.12.3
+
+- Fixed the kubeedge-version flag does not take effect in init and manifest generate command. ([#4935](https://github.com/kubeedge/kubeedge/pull/4935), [@WillardHu](https://github.com/WillardHu))
+- Fix throws nil runtime error when decode AdmissionReview failed. ([#4970](https://github.com/kubeedge/kubeedge/pull/4970), [@WillardHu](https://github.com/WillardHu))
+- Fix repeatedly reporting history device message to cloud. ([#4979](https://github.com/kubeedge/kubeedge/pull/4979), [@RyanZhaoXB](https://github.com/RyanZhaoXB))
+
+   
+# v1.12.3
+
+## Downloads for v1.12.3
+
+Download v1.12.3 in the [v1.12.3 release page](https://github.com/kubeedge/kubeedge/releases/tag/v1.12.3).
+
+## KubeEdge v1.12.3 Release Notes
+
+### Changelog since v1.12.2
+
+- Fix MQTT container exited abnormally when edgecore using cri runtime. ([#4876](https://github.com/kubeedge/kubeedge/pull/4876), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Deal with error in delete pod upstream msg. ([#4879](https://github.com/kubeedge/kubeedge/pull/4879), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Update pod db when patch pod successfully. ([#4892](https://github.com/kubeedge/kubeedge/pull/4892), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Use nodeIP initialization in Kubelet, support reporting nodeIP dynamically . ([#4893](https://github.com/kubeedge/kubeedge/pull/4893), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+
+### Important Steps before Upgrading for 1.12.3
+- In previous versions, when edge node uses remote runtime (not docker runtime), using `keadm join` and specifying `--with-mqtt=true` to install edgecore will cause the Mosquitto container exits abnormally. In this release, this problem has been fixed. Users can specify `--with-mqtt=true` to start Mosquitto container when installing edgecore with `keadm join`.
+
+# v1.12.2
+
+## Downloads for v1.12.2
+
+Download v1.12.2 in the [v1.12.2 release page](https://github.com/kubeedge/kubeedge/releases/tag/v1.12.2).
+
+## KubeEdge v1.12.2 Release Notes
+
+### Changelog since v1.12.1
+
+- Fix prober not work in edgecore. ([#4572](https://github.com/kubeedge/kubeedge/pull/4572), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Optimize convert Kubelet flags, support more Kubelet flags. ([#4575](https://github.com/kubeedge/kubeedge/pull/4575), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
+- Fix force delete pod when edgecore reconnect. ([#4596](https://github.com/kubeedge/kubeedge/pull/4596), [@Shelley-BaoYue](https://github.com/Shelley-BaoYue))
 
 # v1.12.1
 

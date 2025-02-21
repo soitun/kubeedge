@@ -14,7 +14,7 @@ type DeviceModelManager struct {
 	// events from watch kubernetes api server
 	events chan watch.Event
 
-	// DeviceModel, key is DeviceModel.Name, value is *v1alpha2.DeviceModel{}
+	// DeviceModel, key is DeviceModel.Namespace+"/"+deviceModel.Name, value is *v1beta1.DeviceModel{}
 	DeviceModel sync.Map
 }
 
@@ -27,7 +27,10 @@ func (dmm *DeviceModelManager) Events() chan watch.Event {
 func NewDeviceModelManager(si cache.SharedIndexInformer) (*DeviceModelManager, error) {
 	events := make(chan watch.Event, config.Config.Buffer.DeviceModelEvent)
 	rh := NewCommonResourceEventHandler(events)
-	si.AddEventHandler(rh)
+	_, err := si.AddEventHandler(rh)
+	if err != nil {
+		return nil, err
+	}
 
 	return &DeviceModelManager{events: events}, nil
 }

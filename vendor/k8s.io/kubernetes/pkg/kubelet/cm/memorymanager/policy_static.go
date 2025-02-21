@@ -25,12 +25,17 @@ import (
 
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
+	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
+	podutil "k8s.io/kubernetes/pkg/api/v1/pod"
 	corehelper "k8s.io/kubernetes/pkg/apis/core/v1/helper"
 	v1qos "k8s.io/kubernetes/pkg/apis/core/v1/helper/qos"
+	"k8s.io/kubernetes/pkg/features"
 	"k8s.io/kubernetes/pkg/kubelet/cm/memorymanager/state"
 	"k8s.io/kubernetes/pkg/kubelet/cm/topologymanager"
 	"k8s.io/kubernetes/pkg/kubelet/cm/topologymanager/bitmask"
+	"k8s.io/kubernetes/pkg/kubelet/metrics"
+	"k8s.io/kubernetes/pkg/kubelet/types"
 )
 
 const policyTypeStatic policyType = "Static"
@@ -46,7 +51,10 @@ type staticPolicy struct {
 	systemReserved systemReservedMemory
 	// topology manager reference to get container Topology affinity
 	affinity topologymanager.Store
-	// initContainersReusableMemory contains the memory allocated for init containers that can be reused
+	// initContainersReusableMemory contains the memory allocated for init
+	// containers that can be reused.
+	// Note that the restartable init container memory is not included here,
+	// because it is not reusable.
 	initContainersReusableMemory reusableMemory
 }
 
@@ -88,7 +96,7 @@ func (p *staticPolicy) Start(s state.State) error {
 }
 
 // Allocate call is idempotent
-func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) error {
+func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Container) (rerr error) {
 	// allocate the memory only for guaranteed pods
 	if v1qos.GetPodQOS(pod) != v1.PodQOSGuaranteed {
 		return nil
@@ -96,6 +104,13 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 
 	podUID := string(pod.UID)
 	klog.InfoS("Allocate", "pod", klog.KObj(pod), "containerName", container.Name)
+	// container belongs in an exclusively allocated pool
+	metrics.MemoryManagerPinningRequestTotal.Inc()
+	defer func() {
+		if rerr != nil {
+			metrics.MemoryManagerPinningErrorsTotal.Inc()
+		}
+	}()
 	if blocks := s.GetMemoryBlocks(podUID, container.Name); blocks != nil {
 		p.updatePodReusableMemory(pod, container, blocks)
 
@@ -107,7 +122,7 @@ func (p *staticPolicy) Allocate(s state.State, pod *v1.Pod, container *v1.Contai
 	hint := p.affinity.GetAffinity(podUID, container.Name)
 	klog.InfoS("Got topology affinity", "pod", klog.KObj(pod), "podUID", pod.UID, "containerName", container.Name, "hint", hint)
 
-	requestedResources, err := getRequestedResources(container)
+	requestedResources, err := getRequestedResources(pod, container)
 	if err != nil {
 		return err
 	}
@@ -315,11 +330,12 @@ func regenerateHints(pod *v1.Pod, ctn *v1.Container, ctnBlocks []state.Block, re
 }
 
 func getPodRequestedResources(pod *v1.Pod) (map[v1.ResourceName]uint64, error) {
+	// Maximun resources requested by init containers at any given time.
 	reqRsrcsByInitCtrs := make(map[v1.ResourceName]uint64)
-	reqRsrcsByAppCtrs := make(map[v1.ResourceName]uint64)
-
+	// Total resources requested by restartable init containers.
+	reqRsrcsByRestartableInitCtrs := make(map[v1.ResourceName]uint64)
 	for _, ctr := range pod.Spec.InitContainers {
-		reqRsrcs, err := getRequestedResources(&ctr)
+		reqRsrcs, err := getRequestedResources(pod, &ctr)
 
 		if err != nil {
 			return nil, err
@@ -329,14 +345,19 @@ func getPodRequestedResources(pod *v1.Pod) (map[v1.ResourceName]uint64, error) {
 				reqRsrcsByInitCtrs[rsrcName] = uint64(0)
 			}
 
-			if reqRsrcs[rsrcName] > reqRsrcsByInitCtrs[rsrcName] {
-				reqRsrcsByInitCtrs[rsrcName] = qty
+			// See https://github.com/kubernetes/enhancements/tree/master/keps/sig-node/753-sidecar-containers#resources-calculation-for-scheduling-and-pod-admission
+			// for the detail.
+			if types.IsRestartableInitContainer(&ctr) {
+				reqRsrcsByRestartableInitCtrs[rsrcName] += qty
+			} else if reqRsrcsByRestartableInitCtrs[rsrcName]+qty > reqRsrcsByInitCtrs[rsrcName] {
+				reqRsrcsByInitCtrs[rsrcName] = reqRsrcsByRestartableInitCtrs[rsrcName] + qty
 			}
 		}
 	}
 
+	reqRsrcsByAppCtrs := make(map[v1.ResourceName]uint64)
 	for _, ctr := range pod.Spec.Containers {
-		reqRsrcs, err := getRequestedResources(&ctr)
+		reqRsrcs, err := getRequestedResources(pod, &ctr)
 
 		if err != nil {
 			return nil, err
@@ -350,12 +371,17 @@ func getPodRequestedResources(pod *v1.Pod) (map[v1.ResourceName]uint64, error) {
 		}
 	}
 
+	reqRsrcs := make(map[v1.ResourceName]uint64)
 	for rsrcName := range reqRsrcsByAppCtrs {
-		if reqRsrcsByInitCtrs[rsrcName] > reqRsrcsByAppCtrs[rsrcName] {
-			reqRsrcsByAppCtrs[rsrcName] = reqRsrcsByInitCtrs[rsrcName]
+		// Total resources requested by long-running containers.
+		reqRsrcsByLongRunningCtrs := reqRsrcsByAppCtrs[rsrcName] + reqRsrcsByRestartableInitCtrs[rsrcName]
+		reqRsrcs[rsrcName] = reqRsrcsByLongRunningCtrs
+
+		if reqRsrcs[rsrcName] < reqRsrcsByInitCtrs[rsrcName] {
+			reqRsrcs[rsrcName] = reqRsrcsByInitCtrs[rsrcName]
 		}
 	}
-	return reqRsrcsByAppCtrs, nil
+	return reqRsrcs, nil
 }
 
 func (p *staticPolicy) GetPodTopologyHints(s state.State, pod *v1.Pod) map[string][]topologymanager.TopologyHint {
@@ -391,7 +417,7 @@ func (p *staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v
 		return nil
 	}
 
-	requestedResources, err := getRequestedResources(container)
+	requestedResources, err := getRequestedResources(pod, container)
 	if err != nil {
 		klog.ErrorS(err, "Failed to get container requested resources", "pod", klog.KObj(pod), "podUID", pod.UID, "containerName", container.Name)
 		return nil
@@ -408,9 +434,19 @@ func (p *staticPolicy) GetTopologyHints(s state.State, pod *v1.Pod, container *v
 	return p.calculateHints(s.GetMachineState(), pod, requestedResources)
 }
 
-func getRequestedResources(container *v1.Container) (map[v1.ResourceName]uint64, error) {
+func getRequestedResources(pod *v1.Pod, container *v1.Container) (map[v1.ResourceName]uint64, error) {
 	requestedResources := map[v1.ResourceName]uint64{}
-	for resourceName, quantity := range container.Resources.Requests {
+	resources := container.Resources.Requests
+	// In-place pod resize feature makes Container.Resources field mutable for CPU & memory.
+	// AllocatedResources holds the value of Container.Resources.Requests when the pod was admitted.
+	// We should return this value because this is what kubelet agreed to allocate for the container
+	// and the value configured with runtime.
+	if utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling) {
+		if cs, ok := podutil.GetContainerStatus(pod.Status.ContainerStatuses, container.Name); ok {
+			resources = cs.AllocatedResources
+		}
+	}
+	for resourceName, quantity := range resources {
 		if resourceName != v1.ResourceMemory && !corehelper.IsHugePageResourceName(resourceName) {
 			continue
 		}
@@ -438,28 +474,10 @@ func (p *staticPolicy) calculateHints(machineState state.NUMANodeMap, pod *v1.Po
 		maskBits := mask.GetBits()
 		singleNUMAHint := len(maskBits) == 1
 
-		// the node already in group with another node, it can not be used for the single NUMA node allocation
-		if singleNUMAHint && len(machineState[maskBits[0]].Cells) > 1 {
-			return
-		}
-
 		totalFreeSize := map[v1.ResourceName]uint64{}
 		totalAllocatableSize := map[v1.ResourceName]uint64{}
-		// calculate total free memory for the node mask
+		// calculate total free and allocatable memory for the node mask
 		for _, nodeID := range maskBits {
-			// the node already used for the memory allocation
-			if !singleNUMAHint && machineState[nodeID].NumberOfAssignments > 0 {
-				// the node used for the single NUMA memory allocation, it can not be used for the multi NUMA node allocation
-				if len(machineState[nodeID].Cells) == 1 {
-					return
-				}
-
-				// the node already used with different group of nodes, it can not be use with in the current hint
-				if !areGroupsEqual(machineState[nodeID].Cells, maskBits) {
-					return
-				}
-			}
-
 			for resourceName := range requestedResources {
 				if _, ok := totalFreeSize[resourceName]; !ok {
 					totalFreeSize[resourceName] = 0
@@ -483,6 +501,26 @@ func (p *staticPolicy) calculateHints(machineState state.NUMANodeMap, pod *v1.Po
 		// set the minimum amount of NUMA nodes that can satisfy the container resources requests
 		if mask.Count() < minAffinitySize {
 			minAffinitySize = mask.Count()
+		}
+
+		// the node already in group with another node, it can not be used for the single NUMA node allocation
+		if singleNUMAHint && len(machineState[maskBits[0]].Cells) > 1 {
+			return
+		}
+
+		for _, nodeID := range maskBits {
+			// the node already used for the memory allocation
+			if !singleNUMAHint && machineState[nodeID].NumberOfAssignments > 0 {
+				// the node used for the single NUMA memory allocation, it can not be used for the multi NUMA node allocation
+				if len(machineState[nodeID].Cells) == 1 {
+					return
+				}
+
+				// the node already used with different group of nodes, it can not be use with in the current hint
+				if !areGroupsEqual(machineState[nodeID].Cells, maskBits) {
+					return
+				}
+			}
 		}
 
 		// verify that for all memory types the node mask has enough free resources
@@ -837,11 +875,11 @@ func (p *staticPolicy) updatePodReusableMemory(pod *v1.Pod, container *v1.Contai
 	// If pod entries to m.initContainersReusableMemory other than the current pod exist, delete them.
 	for uid := range p.initContainersReusableMemory {
 		if podUID != uid {
-			delete(p.initContainersReusableMemory, podUID)
+			delete(p.initContainersReusableMemory, uid)
 		}
 	}
 
-	if isInitContainer(pod, container) {
+	if isRegularInitContainer(pod, container) {
 		if _, ok := p.initContainersReusableMemory[podUID]; !ok {
 			p.initContainersReusableMemory[podUID] = map[string]map[v1.ResourceName]uint64{}
 		}
@@ -890,6 +928,12 @@ func (p *staticPolicy) updateInitContainersMemoryBlocks(s state.State, pod *v1.P
 				break
 			}
 
+			if types.IsRestartableInitContainer(&initContainer) {
+				// we should not reuse the resource from any restartable init
+				// container
+				continue
+			}
+
 			initContainerBlocks := s.GetMemoryBlocks(podUID, initContainer.Name)
 			if len(initContainerBlocks) == 0 {
 				continue
@@ -923,10 +967,10 @@ func (p *staticPolicy) updateInitContainersMemoryBlocks(s state.State, pod *v1.P
 	}
 }
 
-func isInitContainer(pod *v1.Pod, container *v1.Container) bool {
+func isRegularInitContainer(pod *v1.Pod, container *v1.Container) bool {
 	for _, initContainer := range pod.Spec.InitContainers {
 		if initContainer.Name == container.Name {
-			return true
+			return !types.IsRestartableInitContainer(&initContainer)
 		}
 	}
 

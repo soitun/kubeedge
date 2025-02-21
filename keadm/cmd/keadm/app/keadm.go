@@ -18,16 +18,33 @@ package app
 
 import (
 	"flag"
+	"fmt"
 
 	"github.com/spf13/pflag"
+	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/klog/v2"
+	"sigs.k8s.io/apiserver-network-proxy/pkg/util"
 
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd"
 )
 
-//Run executes the keadm command
+// Run executes the keadm command
 func Run() error {
-	pflag.CommandLine.AddGoFlagSet(flag.CommandLine)
-
+	flagSet := flag.NewFlagSet("keadm", flag.ExitOnError)
 	cmd := cmd.NewKubeedgeCommand()
+	flags := cmd.Flags()
+	klog.InitFlags(flagSet)
+	err := flagSet.Set("v", "0")
+	if err != nil {
+		return fmt.Errorf("error setting klog flags: %v", err)
+	}
+
+	flagSet.Visit(func(fl *flag.Flag) {
+		fl.Name = util.Normalize(fl.Name)
+		flags.AddGoFlag(fl)
+	})
+
+	pflag.CommandLine.SetNormalizeFunc(cliflag.WordSepNormalizeFunc)
+	pflag.CommandLine.AddFlagSet(flags)
 	return cmd.Execute()
 }

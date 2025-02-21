@@ -1,13 +1,18 @@
 package cloudhub
 
 import (
+	"errors"
+	"fmt"
 	"os"
 
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/kubeapiserver/authorizer/modes"
 
+	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
+	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/authorization"
 	hubconfig "github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/dispatcher"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/handler"
@@ -18,10 +23,10 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 var DoneTLSTunnelCerts = make(chan bool, 1)
+var sessionMgr *session.Manager
 
 type cloudHub struct {
 	enable               bool
@@ -34,7 +39,7 @@ type cloudHub struct {
 var _ core.Module = (*cloudHub)(nil)
 
 func newCloudHub(enable bool) *cloudHub {
-	crdFactory := informers.GetInformersManager().GetCRDInformerFactory()
+	crdFactory := informers.GetInformersManager().GetKubeEdgeInformerFactory()
 	// declare used informer
 	clusterObjectSyncInformer := crdFactory.Reliablesyncs().V1alpha1().ClusterObjectSyncs()
 	objectSyncInformer := crdFactory.Reliablesyncs().V1alpha1().ObjectSyncs()
@@ -45,9 +50,17 @@ func newCloudHub(enable bool) *cloudHub {
 		sessionManager, objectSyncInformer.Lister(),
 		clusterObjectSyncInformer.Lister(), client.GetCRDClient())
 
+	config := getAuthConfig()
+	authorizer, err := config.New()
+	if err != nil {
+		panic(fmt.Sprintf("unable to create new authorizer for CloudHub: %v", err))
+	}
+
 	messageHandler := handler.NewMessageHandler(
 		int(hubconfig.Config.KeepaliveInterval),
-		sessionManager, client.GetCRDClient(), messageDispatcher)
+		sessionManager, client.GetCRDClient(),
+		messageDispatcher, authorizer)
+	sessionMgr = sessionManager
 
 	ch := &cloudHub{
 		enable:         enable,
@@ -84,13 +97,14 @@ func (ch *cloudHub) Start() {
 		klog.Errorf("unable to sync caches for objectSyncController")
 		os.Exit(1)
 	}
+	ctx := beehiveContext.GetContext()
 
 	// start dispatch message from the cloud to edge node
 	go ch.dispatcher.DispatchDownstream()
 
 	// check whether the certificates exist in the local directory,
 	// and then check whether certificates exist in the secret, generate if they don't exist
-	if err := httpserver.PrepareAllCerts(); err != nil {
+	if err := httpserver.PrepareAllCerts(ctx); err != nil {
 		klog.Exit(err)
 	}
 	// TODO: Will improve in the future
@@ -98,12 +112,16 @@ func (ch *cloudHub) Start() {
 	close(DoneTLSTunnelCerts)
 
 	// generate Token
-	if err := httpserver.GenerateToken(); err != nil {
+	if err := httpserver.GenerateAndRefreshToken(ctx); err != nil {
 		klog.Exit(err)
 	}
 
 	// HttpServer mainly used to issue certificates for the edge
-	go httpserver.StartHTTPServer()
+	go func() {
+		if err := httpserver.StartHTTPServer(); err != nil {
+			klog.Exit(err)
+		}
+	}()
 
 	servers.StartCloudHub(ch.messageHandler)
 
@@ -112,4 +130,39 @@ func (ch *cloudHub) Start() {
 		// It is not used to communicate between cloud and edge.
 		go udsserver.StartServer(hubconfig.Config.UnixSocket.Address)
 	}
+}
+
+func getAuthConfig() authorization.Config {
+	enabled := hubconfig.Config.Authorization != nil && hubconfig.Config.Authorization.Enable
+	debug := enabled && hubconfig.Config.Authorization.Debug
+	builtinInformerFactory := informers.GetInformersManager().GetKubeInformerFactory()
+
+	var authorizationModes []string
+	if enabled {
+		for _, modeConfig := range hubconfig.Config.Authorization.Modes {
+			switch {
+			case modeConfig.Node != nil && modeConfig.Node.Enable:
+				{
+					authorizationModes = append(authorizationModes, modes.ModeNode)
+				}
+			}
+		}
+	}
+	if len(authorizationModes) == 0 {
+		authorizationModes = []string{modes.ModeAlwaysAllow}
+	}
+
+	return authorization.Config{
+		Enabled:                  enabled,
+		Debug:                    debug,
+		AuthorizationModes:       authorizationModes,
+		VersionedInformerFactory: builtinInformerFactory,
+	}
+}
+
+func GetSessionManager() (*session.Manager, error) {
+	if sessionMgr != nil {
+		return sessionMgr, nil
+	}
+	return nil, errors.New("cloudhub not initialized")
 }

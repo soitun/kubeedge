@@ -25,7 +25,9 @@ import (
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	cliflag "k8s.io/component-base/cli/flag"
+	"k8s.io/component-base/cli/globalflag"
 	"k8s.io/component-base/featuregate"
 	kubeletapp "k8s.io/kubernetes/cmd/kubelet/app"
 	kubeletoptions "k8s.io/kubernetes/cmd/kubelet/app/options"
@@ -35,7 +37,6 @@ import (
 	containertest "k8s.io/kubernetes/pkg/kubelet/container/testing"
 	"k8s.io/kubernetes/pkg/kubelet/cri/remote"
 	fakeremote "k8s.io/kubernetes/pkg/kubelet/cri/remote/fake"
-	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 	"k8s.io/kubernetes/pkg/util/oom"
 	"k8s.io/kubernetes/pkg/volume"
 	"k8s.io/kubernetes/pkg/volume/configmap"
@@ -49,12 +50,12 @@ import (
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
 	"k8s.io/mount-utils"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 	"github.com/kubeedge/kubeedge/edge/pkg/edged"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 type hollowEdgeNodeConfig struct {
@@ -96,6 +97,7 @@ func newHollowEdgeNodeCommand() *cobra.Command {
 
 	fs := cmd.Flags()
 	fs.AddGoFlagSet(flag.CommandLine) // for flags like --docker-only
+	globalflag.AddGlobalFlags(fs, cmd.Name())
 	s.addFlags(fs)
 
 	return cmd
@@ -135,6 +137,7 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 	edgeCoreConfig := v1alpha2.NewDefaultEdgeCoreConfig()
 
 	falseFlag := false
+	trueFlag := true
 
 	// overWrite config
 	edgeCoreConfig.DataBase.DataSource = "/edgecore.db"
@@ -144,9 +147,8 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 
 	edgeCoreConfig.Modules.Edged.HostnameOverride = config.NodeName
 	edgeCoreConfig.Modules.Edged.NodeLabels = config.NodeLabels
-	edgeCoreConfig.Modules.Edged.RegisterNode = true
+	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.RegisterNode = &trueFlag
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.CgroupsPerQOS = &falseFlag
-	edgeCoreConfig.Modules.Edged.ContainerRuntime = kubetypes.RemoteContainerRuntime
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.EnableControllerAttachDetach = &falseFlag
 	edgeCoreConfig.Modules.Edged.TailoredKubeletConfig.ProtectKernelDefaults = false
 
@@ -155,7 +157,7 @@ func EdgeCoreConfig(config *hollowEdgeNodeConfig) *v1alpha2.EdgeCoreConfig {
 
 func GetFakeKubeletDeps(
 	s *kubeletoptions.KubeletServer,
-	featureGate featuregate.FeatureGate) (*kubelet.Dependencies, error) {
+	_ featuregate.FeatureGate) (*kubelet.Dependencies, error) {
 	endpoint, err := fakeremote.GenerateEndpoint()
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate fake endpoint %v", err)
@@ -166,7 +168,7 @@ func GetFakeKubeletDeps(
 		return nil, fmt.Errorf("failed to start fake runtime %v", err)
 	}
 
-	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 15*time.Second)
+	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, 15*time.Second, oteltrace.NewNoopTracerProvider())
 	if err != nil {
 		return nil, fmt.Errorf("failed to init runtime service %v", err)
 	}

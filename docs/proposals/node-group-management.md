@@ -57,7 +57,7 @@ However, with the number of locations increasing, operation and maintenance of a
 ### Architecture
 ![image](../images/node-group-management/group-management-arch.png)
 
-The implementation consists of two components. a new `GroupManagementControllerManager` and the endpointslice filter in the `cloudcore`. The `GroupManagementControllerManager` contains controllers of new CRDs, including `NodeGroupController` and `EdgeApplicationController`. The endpointslice filter is used to filter endpoints in endpointslices before sending them to the edgecore so as to make edgecore only aware of the endpoints in the same node group.
+The implementation consists of two components. a new `GroupManagementControllerManager` and the endpointslice filter in the `cloudcore`. The `GroupManagementControllerManager` contains controllers of new CRDs, including `NodeGroupController` and `EdgeApplicationController`. The endpointslice filter is used to filter endpoints in endpointslices before sending them to the edgecore to make edgecore only aware of the endpoints in the same node group.
 
 NodeGroup will organize nodes according to their labels which should be set based on their locations in advance, `location: hangzhou` and `location: beijing` in this case. After applying the NodeGroup resource, nodes will be grouped in `hangzhou` and `beijing` logically.
 
@@ -135,8 +135,8 @@ type EdgeApplication struct {
 type EdgeAppSpec struct {
 	// WorkloadTemplate represents original templates of manifested resources to be deployed in node groups.
 	WorkloadTemplate ResourceTemplate `json:"workloadTemplate,omitempty"`
-	// WorkloadScopes represents which node groups the workload will be deployed in.
-	WorkloadScopes WorkloadScope `json:"workloadScopes"`
+	// WorkloadScope represents which node groups the workload will be deployed in.
+	WorkloadScope WorkloadScope `json:"workloadScope"`
 }
 
 // WorkloadScope represents which node groups the workload to be deployed in.
@@ -166,11 +166,75 @@ type ResourceTemplate struct {
 type Overriders struct {
 	// Replicas will override the replicas field of deployment
 	// +optional
-	Replicas int `json:"replicas,omitempty"`
-	// ImageOverrider represents the rules dedicated to handling image overrides.
+	Replicas *int `json:"replicas,omitempty"`
+	// ImageOverriders represents the rules dedicated to handling image overrides.
 	// +optional
-	ImageOverrider []ImageOverrider `json:"imageOverrider,omitempty"`
+	ImageOverriders []ImageOverrider `json:"imageOverriders,omitempty"`
+	// EnvOverrides will override the env field of the container
+	// +optional
+	EnvOverrides []EnvOverrider `json:"envOverrides,omitempty"`
+	// CommandOverriders represents the rules dedicated to handling container command
+	// +optional
+	CommandOverriders []CommandArgsOverrider `json:"commandOverriders,omitempty"`
+	// ArgsOverriders represents the rules dedicated to handling container args
+	// +optional
+	ArgsOverriders []CommandArgsOverrider `json:"argsOverriders,omitempty"`
+	// ResourcesOverrides will override the resources field of the container
+	// +optional
+	ResourcesOverrides []ResourcesOverrider `json:"resourcesOverrides,omitempty"`
 }
+
+// CommandArgsOverrider represents the rules dedicated to handling command/args overrides.
+type CommandArgsOverrider struct {
+	// The name of container
+	// +required
+	ContainerName string `json:"containerName"`
+	
+	// Operator represents the operator which will apply on the command/args.
+	// +kubebuilder:validation:Enum=add;remove
+	// +required
+	Operator OverriderOperator `json:"operator"`
+	
+	// Value to be applied to command/args.
+	// Items in Value which will be appended after command/args when Operator is 'add'.
+	// Items in Value which match in command/args will be deleted when Operator is 'remove'.
+	// If Value is empty, then the command/args will remain the same.
+	// +optional
+	Value []string `json:"value,omitempty"`
+}
+
+// EnvOverrider represents the rules dedicated to handling env overrides.
+type EnvOverrider struct {
+	// The name of container
+	// +required
+	ContainerName string `json:"containerName"`
+	
+	// Operator represents the operator which will apply on the env.
+	// +kubebuilder:validation:Enum=add;remove;replace
+	// +required
+	Operator OverriderOperator `json:"operator"`
+	
+	// Value to be applied to env.
+	// Must not be empty when operator is 'add' or 'replace'.
+	// When the operator is 'remove', the matched value in env will be deleted
+	// and only the name of the value will be matched.
+	// If Value is empty, then the env will remain the same.
+	// +optional
+	Value []corev1.EnvVar `json:"value,omitempty"`
+}
+
+// ResourcesOverrider represents the rules dedicated to handling resources overrides.
+type ResourcesOverrider struct {
+	// The name of container
+	// +required
+	ContainerName string `json:"containerName"`
+	
+	// Value to be applied to resources.
+	// Must not be empty
+	// +required
+	Value corev1.ResourceRequirements `json:"value,omitempty"`
+}
+
 
 // ImageOverrider represents the rules dedicated to handling image overrides.
 type ImageOverrider struct {
@@ -178,10 +242,10 @@ type ImageOverrider struct {
 	//
 	// Defaults to nil, in that case, the system will automatically detect image fields if the resource type is
 	// Pod, ReplicaSet, Deployment or StatefulSet by following rule:
-	//   - Pod: spec/containers/<N>/image
-	//   - ReplicaSet: spec/template/spec/containers/<N>/image
-	//   - Deployment: spec/template/spec/containers/<N>/image
-	//   - StatefulSet: spec/template/spec/containers/<N>/image
+	//   - Pod: /spec/containers/<N>/image
+	//   - ReplicaSet: /spec/template/spec/containers/<N>/image
+	//   - Deployment: /spec/template/spec/containers/<N>/image
+	//   - StatefulSet: /spec/template/spec/containers/<N>/image
 	// In addition, all images will be processed if the resource object has more than one containers.
 	//
 	// If not nil, only images matches the filters will be processed.
@@ -341,54 +405,77 @@ spec:
   workloadTemplate:
     manifests:
     - apiVersion: apps/v1
-    kind: Deployment
-    metadata:
-      name: nginx
-    spec:
-      selector:
-        matchLabels:
-          app: nginx
-      template:
-        metadata:
-          labels:
+      kind: Deployment
+      metadata:
+        name: nginx
+      spec:
+        selector:
+          matchLabels:
             app: nginx
-        spec:
-          containers:
-          - name: nginx
-            image: nginx:latest
-          ports:
-          - containerPort: 80
+        template:
+          metadata:
+            labels:
+              app: nginx
+          spec:
+            containers:
+            - name: nginx
+              image: nginx:latest
+            ports:
+            - containerPort: 80
     - apiVersion: v1
-    kind: Service
-    metadata:
-      name: nginx-service
-    spec:
-      selector:
-        app: nginx
-      ports:
-      - name: http
-        protocol: TCP
-        port: 80
-        targetPort: 8080
-      type: LoadBalancer
-  workloadScopes:
+      kind: Service
+      metadata:
+        name: nginx-service
+      spec:
+        selector:
+          app: nginx
+        ports:
+        - name: http
+          protocol: TCP
+          port: 80
+          targetPort: 8080
+        type: LoadBalancer
+  workloadScope:
     targetNodeGroups:
       - name: hangzhou
         overriders:
           replicas: 2
-          imageOverrider:
-            - component: "registry"
+          imageOverriders:
+            - component: "Registry"
               operator: "replace"
               value: "hangzhou.registry.io"
+          envOverrides:
+            - containerName: "nginx"
+              operator: "add"
+              value:
+              	- name: "env1"
+              	  value: "test1"
+          commandOverriders:
+            - containerName: "nginx"
+              operator: "add"
+              value: ["your-command-1"]
+          argsOverriders:
+            - containerName: "nginx"
+              operator: "add"
+              value: ["your-args-1"]
+          resourcesOverrides:
+            - containerName: "nginx"
+              value:
+                limits:
+              	  cpu: 250m
+              	  memory: 512Mi
+                requests:
+              	  cpu: 250m
+              	  memory: 512Mi
       - name: beijing
         overriders:
           replicas: 3
-          imageOverrider:
-            - component: "registry"
+          imageOverriders:
+            - component: "Registry"
               operator: "replace"
               value: "beijing.registry.io"
 ```
-Then two deployments called `nginx-hangzhou` and `nginx-beijing` will be created for hangzhou nodegroup and beijing nodegroup with `replicas: 2` and `replicas: 3` respectively. Pods running in hangzhou nodegroup will use the image `hangzhou.registry.io/nginx:latest` and pods running in beijing nodegroup will use the image `beijing.resistry.io/nginx.latest`. 
+Then two deployments called `nginx-hangzhou` and `nginx-beijing` will be created for hangzhou nodegroup and beijing nodegroup with `replicas: 2` and `replicas: 3` respectively. Pods running in hangzhou nodegroup will use the image `hangzhou.registry.io/nginx:latest` and pods running in beijing nodegroup will use the image `beijing.resistry.io/nginx:latest`. 
 
 The service in the EdgeApplication will also be created and injected with label `groupmanagement.kubeedge.io/edgeapplication-name: nginx-app`. The endpointslice filter in the cloudcore will check the relative EdgeApplication when sending the endpointslice to the edgecore in some nodegroup. It will filter out endpoints not in that nodegroup. Then, clients running in hangzhou node group can only reach the 2 pod instances that are also running in hangzhou node group. The situation of beijing node group is the same.
 

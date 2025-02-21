@@ -18,9 +18,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/handler"
-	"sigs.k8s.io/controller-runtime/pkg/source"
 
-	appsv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/apps/v1alpha1"
+	appsv1alpha1 "github.com/kubeedge/api/apis/apps/v1alpha1"
 )
 
 const (
@@ -38,7 +37,7 @@ var (
 		corev1.ConditionTrue:    appsv1alpha1.NodeReady,
 		corev1.ConditionFalse:   appsv1alpha1.NodeNotReady,
 		corev1.ConditionUnknown: appsv1alpha1.Unknown,
-		// for the convinence of processing the situation that node has no ready condition
+		// for the convenience of processing the situation that node has no ready condition
 		"": appsv1alpha1.Unknown,
 	}
 )
@@ -186,7 +185,7 @@ func (c *Controller) SetupWithManager(ctx context.Context, mgr controllerruntime
 	}
 	return controllerruntime.NewControllerManagedBy(mgr).
 		For(&appsv1alpha1.NodeGroup{}).
-		Watches(&source.Kind{Type: &corev1.Node{}}, handler.EnqueueRequestsFromMapFunc(c.nodeMapFunc)).
+		Watches(&corev1.Node{}, handler.EnqueueRequestsFromMapFunc(c.nodeMapFunc)).
 		Complete(c)
 }
 
@@ -227,6 +226,7 @@ func (c *Controller) evictPodsShouldNotRunOnNode(ctx context.Context, node *core
 		if v, ok := nodeSelector[LabelBelongingTo]; ok && v == nodegroup {
 			// TODO: in an async way?
 			// Delete pod seems to block until the pod has actually stopped
+			klog.V(4).Infof("try to evict pod %s/%s running on node %s", pod.Namespace, pod.Name, node.Name)
 			if err := c.Client.Delete(ctx, pod); err != nil {
 				errs = append(errs, fmt.Errorf("failed to delete pod %s/%s, %v", pod.Namespace, pod.Name, err))
 			}
@@ -269,7 +269,7 @@ func (c *Controller) getNodesSelectedBy(ctx context.Context, nodeGroup *appsv1al
 // We can assume that one node can only be in one of following conditions:
 // 1. This node is an orphan, do not and will not belong to any NodeGroup.
 // 2. This node is or will be a member of one NodeGroup.
-func (c *Controller) nodeMapFunc(obj client.Object) []controllerruntime.Request {
+func (c *Controller) nodeMapFunc(_ context.Context, obj client.Object) []controllerruntime.Request {
 	node := obj.(*corev1.Node)
 	if nodeGroupName, ok := node.Labels[LabelBelongingTo]; ok {
 		return []controllerruntime.Request{
@@ -280,7 +280,7 @@ func (c *Controller) nodeMapFunc(obj client.Object) []controllerruntime.Request 
 			},
 		}
 	}
-	// node do not have belonging label, either a new node will be add to a node group or an orphan node
+	// node do not have belonging label, either a new node will be added to a node group or an orphan node
 	nodegroupList := &appsv1alpha1.NodeGroupList{}
 	if err := c.Client.List(context.TODO(), nodegroupList); err != nil {
 		klog.Errorf("failed to list all nodegroups, %s", err)
@@ -305,9 +305,7 @@ func (c *Controller) nodeMapFunc(obj client.Object) []controllerruntime.Request 
 }
 
 func (c *Controller) evictNodesInNodegroup(ctx context.Context, nodeGroupName string) error {
-	selector := labels.SelectorFromSet(labels.Set(
-		map[string]string{LabelBelongingTo: nodeGroupName},
-	))
+	selector := labels.SelectorFromSet(map[string]string{LabelBelongingTo: nodeGroupName})
 	nodeList := &corev1.NodeList{}
 	err := c.Client.List(ctx, nodeList, &client.ListOptions{LabelSelector: selector})
 	if err != nil {
@@ -323,7 +321,7 @@ func (c *Controller) getNodesByLabels(ctx context.Context, matchLabels map[strin
 		// Otherwise, it will select all nodes, it's not what we want
 		return []corev1.Node{}, nil
 	}
-	selector := labels.SelectorFromSet(labels.Set(matchLabels))
+	selector := labels.SelectorFromSet(matchLabels)
 	nodeList := &corev1.NodeList{}
 	err := c.Client.List(ctx, nodeList, &client.ListOptions{LabelSelector: selector})
 	if err != nil {
@@ -357,7 +355,7 @@ func (c *Controller) addOrUpdateNodeLabel(ctx context.Context, node *corev1.Node
 		return nil
 	}
 	if ok && v != nodeGroupName {
-		return fmt.Errorf("node %s has already belonged to NodeGroup %s", node.Name, nodeGroupName)
+		return fmt.Errorf("node %s has already belonged to NodeGroup %s", node.Name, v)
 	}
 
 	// !ok
@@ -383,7 +381,7 @@ func IfMatchNodeGroup(node *corev1.Node, nodegroup *appsv1alpha1.NodeGroup) bool
 		}
 	}
 	// check if labels of this node selected by nodegroup.Spec.MatchLabels
-	selector := labels.SelectorFromSet(labels.Set(nodegroup.Spec.MatchLabels))
+	selector := labels.SelectorFromSet(nodegroup.Spec.MatchLabels)
 	return selector.Matches(labels.Set(node.Labels))
 }
 

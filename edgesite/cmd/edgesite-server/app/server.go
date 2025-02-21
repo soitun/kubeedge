@@ -92,7 +92,7 @@ func (p *Proxy) run(o *options.ProxyRunOptions) error {
 	if err != nil {
 		return err
 	}
-	server := server.NewProxyServer(o.ServerID, ps, int(o.ServerCount), authOpt, true)
+	server := server.NewProxyServer(o.ServerID, ps, int(o.ServerCount), authOpt)
 
 	masterStop, err := p.runMasterServer(ctx, o, server)
 	if err != nil {
@@ -353,11 +353,11 @@ func (p *Proxy) runHealthServer(o *options.ProxyRunOptions, server *server.Proxy
 	readinessHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ready, msg := server.Readiness.Ready()
 		if ready {
-			w.WriteHeader(200)
+			w.WriteHeader(http.StatusOK)
 			fmt.Fprintf(w, "ok")
 			return
 		}
-		w.WriteHeader(500)
+		w.WriteHeader(http.StatusInternalServerError)
 		fmt.Fprintf(w, msg)
 	})
 

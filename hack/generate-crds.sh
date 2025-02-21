@@ -20,9 +20,10 @@ set -o pipefail
 
 CRD_VERSIONS=v1
 CRD_OUTPUTS=build/crds
-DEVICES_VERSION=v1alpha2
+DEVICES_VERSION=v1beta1
 OPERATIONS_VERSION=v1alpha1
 RELIABLESYNCS_VERSION=v1alpha1
+SERVICEACCOUNTACCESS_VERSION=v1alpha1
 APPS_VERSION=v1alpha1
 HELM_CRDS_DIR=manifests/charts/cloudcore/crds
 ROUTER_DIR=build/crds/router
@@ -58,18 +59,35 @@ while [ $# -gt 0 ]; do
 done
 
 function :pre:install: {
-  # install controller-gen tool if not exsit
+  # install controller-gen tool if not exist
   if [ "$(which controller-gen)" == "" ]; then
       echo "Start to install controller-gen tool"
-      GO111MODULE=on go install -v sigs.k8s.io/controller-tools/cmd/controller-gen@v0.6.2
+      GO111MODULE=on go install -v sigs.k8s.io/controller-tools/cmd/controller-gen@v0.15.0
       GOPATH="${GOPATH:-$(go env GOPATH)}"
       export PATH=$PATH:$GOPATH/bin
+  fi
+
+  # TODO: When Kubernetes fixes this issue, we can remove this.
+  local install_osname=$(uname -s | tr '[:upper:]' '[:lower:]')
+  local yq_url="https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_${install_osname}_amd64"
+  command -v yq >/dev/null 2>&1
+  if [[ $? -ne 0 ]]; then
+    echo "not exists yq installing it..."
+    wget $yq_url -O "/usr/local/bin/yq"
+    chmod +x "/usr/local/bin/yq"
   fi
 }
 
 function :gen:crds: {
   # generate crds
+  cd staging/src/github.com/kubeedge/api/apis
   $(which controller-gen) paths="./..." ${_crdOptions} output:crd:artifacts:config=${_tmpdir}
+  # ServiceAccount.Secret.Name property is in x-kubernetes-list-map-keys, 
+  # but it is not have a default and not be a required property.
+  # So, we need to add it to required properties through yq.
+  # TODO: When Kubernetes fixes this issue, we can remove this.
+  yq -i '.spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.serviceAccount.properties.secrets.items.required[0]="name"' ${_tmpdir}/policy.kubeedge.io_serviceaccountaccesses.yaml
+  cd -
 }
 
 # remove the last element if it ends with "s", i.e: devicemodels -> devicemodel
@@ -84,6 +102,8 @@ function :copy:to:destination {
   mkdir -p ${CRD_OUTPUTS}/devices
   mkdir -p ${CRD_OUTPUTS}/reliablesyncs
   mkdir -p ${CRD_OUTPUTS}/apps
+  mkdir -p ${CRD_OUTPUTS}/policy
+  mkdir -p ${CRD_OUTPUTS}/operations
 
   for entry in `ls /tmp/crds/*.yaml`; do
       CRD_NAME=$(echo ${entry} | cut -d'.' -f3 | cut -d'_' -f2)
@@ -96,13 +116,17 @@ function :copy:to:destination {
           CRD_NAME=$(remove_suffix_s "$CRD_NAME")
           cp -v ${entry} ${CRD_OUTPUTS}/apps/apps_${APPS_VERSION}_${CRD_NAME}.yaml
           cp -v ${entry} ${HELM_CRDS_DIR}/apps_${APPS_VERSION}_${CRD_NAME}.yaml
+      elif [ "$CRD_NAME" == "serviceaccountaccesses" ]; then
+          CRD_NAME="serviceaccountaccess"
+          cp -v ${entry} ${CRD_OUTPUTS}/policy/policy_${SERVICEACCOUNTACCESS_VERSION}_${CRD_NAME}.yaml
+          cp -v ${entry} ${HELM_CRDS_DIR}/policy_${SERVICEACCOUNTACCESS_VERSION}_${CRD_NAME}.yaml
       elif [ "$CRD_NAME" == "clusterobjectsyncs" ]; then
           cp -v ${entry} ${CRD_OUTPUTS}/reliablesyncs/cluster_objectsync_${RELIABLESYNCS_VERSION}.yaml
           cp -v ${entry} ${HELM_CRDS_DIR}/cluster_objectsync_${RELIABLESYNCS_VERSION}.yaml
       elif [ "$CRD_NAME" == "objectsyncs" ]; then
           cp -v ${entry} ${CRD_OUTPUTS}/reliablesyncs/objectsync_${RELIABLESYNCS_VERSION}.yaml
           cp -v ${entry} ${HELM_CRDS_DIR}/objectsync_${RELIABLESYNCS_VERSION}.yaml
-      elif [ "$CRD_NAME" == "nodeupgradejobs" ]; then
+      elif [ "$CRD_NAME" == "nodeupgradejobs" ] || [ "$CRD_NAME" == "imageprepulljobs" ]; then
           CRD_NAME=$(remove_suffix_s "$CRD_NAME")
           cp -v ${entry} ${CRD_OUTPUTS}/operations/operations_${OPERATIONS_VERSION}_${CRD_NAME}.yaml
           cp -v ${entry} ${HELM_CRDS_DIR}/operations_${OPERATIONS_VERSION}_${CRD_NAME}.yaml

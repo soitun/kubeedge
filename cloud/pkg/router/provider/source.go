@@ -3,8 +3,8 @@ package provider
 import (
 	"k8s.io/klog/v2"
 
+	v1 "github.com/kubeedge/api/apis/rules/v1"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/listener"
-	v1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
 )
 
 type SourceFactory interface {
@@ -34,7 +34,7 @@ func RegisterSource(s SourceFactory) {
 	klog.V(4).Info("source " + s.Type() + " registered")
 }
 
-// get source map
+// GetSourceFactory get source map
 func GetSourceFactory(name v1.RuleEndpointTypeDef) (SourceFactory, bool) {
 	source, exist := sources[name]
 	return source, exist

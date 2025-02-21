@@ -17,6 +17,7 @@ limitations under the License.
 package dispatcher
 
 import (
+	"fmt"
 	"reflect"
 	"testing"
 
@@ -24,15 +25,15 @@ import (
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/reliablesyncs/v1alpha1"
+	"github.com/kubeedge/api/client/clientset/versioned/fake"
+	syncinformer "github.com/kubeedge/api/client/informers/externalversions"
+	synclisters "github.com/kubeedge/api/client/listers/reliablesyncs/v1alpha1"
 	beehivemodel "github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common"
 	tf "github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common/testing"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/session"
-	"github.com/kubeedge/kubeedge/pkg/apis/reliablesyncs/v1alpha1"
-	"github.com/kubeedge/kubeedge/pkg/client/clientset/versioned/fake"
-	syncinformer "github.com/kubeedge/kubeedge/pkg/client/informers/externalversions"
-	synclisters "github.com/kubeedge/kubeedge/pkg/client/listers/reliablesyncs/v1alpha1"
-	mockcon "github.com/kubeedge/viaduct/pkg/conn/testing"
+	mockcon "github.com/kubeedge/kubeedge/pkg/viaduct/pkg/conn/testing"
 )
 
 func TestNoAckRequired(t *testing.T) {
@@ -72,11 +73,6 @@ func TestNoAckRequired(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "applicationResponse message",
-			message: beehivemodel.NewMessage("").SetResourceOperation("/node/edge-test/ignore/Application/ignore", "applicationResponse"),
-			want:    true,
-		},
-		{
 			name:    "user data message",
 			message: beehivemodel.NewMessage("router").SetRoute("", "user"),
 			want:    true,
@@ -87,13 +83,13 @@ func TestNoAckRequired(t *testing.T) {
 			want:    true,
 		},
 		{
-			name:    "response ok message",
-			message: beehivemodel.NewMessage("").SetResourceOperation("node/edge-node/default/node/edge-node", "response").FillBody("OK"),
+			name:    "node message",
+			message: beehivemodel.NewMessage("").SetResourceOperation("node/edge-node/default/node/edge-node", "response").SetRoute("edgecontroller", "resource"),
 			want:    true,
 		},
 		{
-			name:    "node message",
-			message: beehivemodel.NewMessage("").SetResourceOperation("node/edge-node/default/node/edge-node", "response").SetRoute("edgecontroller", "resource"),
+			name:    "response error message",
+			message: beehivemodel.NewMessage("").SetResourceOperation("node/edge-node/default/node/edge-node", "response").FillBody(fmt.Errorf("error")),
 			want:    true,
 		},
 		{

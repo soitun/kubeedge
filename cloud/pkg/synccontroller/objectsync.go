@@ -9,22 +9,21 @@ import (
 	"k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/reliablesyncs/v1alpha1"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	edgectrconst "github.com/kubeedge/kubeedge/cloud/pkg/edgecontroller/constants"
 	commonconst "github.com/kubeedge/kubeedge/common/constants"
-	"github.com/kubeedge/kubeedge/pkg/apis/reliablesyncs/v1alpha1"
 	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
-func (sctl *SyncController) manageObject(sync *v1alpha1.ObjectSync) {
+func (sctl *SyncController) reconcileObjectSync(sync *v1alpha1.ObjectSync) {
 	var object metav1.Object
 
 	gv, err := schema.ParseGroupVersion(sync.Spec.ObjectAPIVersion)
@@ -35,8 +34,14 @@ func (sctl *SyncController) manageObject(sync *v1alpha1.ObjectSync) {
 	gvr := gv.WithResource(resource)
 	nodeName := getNodeName(sync.Name)
 	resourceType := strings.ToLower(sync.Spec.ObjectKind)
-	//ret, err := informers.GetInformersManager().GetDynamicSharedInformerFactory().ForResource(gvr).Lister().ByNamespace(sync.Namespace).Get(sync.Spec.ObjectName)
-	ret, err := sctl.kubeclient.Resource(gvr).Namespace(sync.Namespace).Get(context.TODO(), sync.Spec.ObjectName, metav1.GetOptions{})
+
+	lister, err := sctl.informerManager.GetLister(gvr)
+	if err != nil {
+		return
+	}
+
+	ret, err := lister.ByNamespace(sync.Namespace).Get(sync.Spec.ObjectName)
+
 	if apierrors.IsNotFound(err) {
 		sctl.gcOrphanedObjectSync(sync)
 		return
@@ -84,11 +89,6 @@ func (sctl *SyncController) gcOrphanedObjectSync(sync *v1alpha1.ObjectSync) {
 
 func sendEvents(nodeName string, sync *v1alpha1.ObjectSync, resourceType string,
 	objectResourceVersion string, obj interface{}) {
-	runtimeObj := obj.(runtime.Object)
-	if err := util.SetMetaType(runtimeObj); err != nil {
-		klog.Warningf("failed to set metatype :%v", err)
-	}
-
 	if sync.Status.ObjectResourceVersion == "" {
 		klog.Errorf("The ObjectResourceVersion is empty in status of objectsync: %s", sync.Name)
 		return

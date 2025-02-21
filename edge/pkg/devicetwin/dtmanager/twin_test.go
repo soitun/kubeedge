@@ -24,17 +24,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 	"github.com/golang/mock/gomock"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/beehive/pkg/core/model"
-	"github.com/kubeedge/kubeedge/edge/mocks/beego"
-	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtclient"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcommon"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcontext"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dttype"
+	"github.com/kubeedge/kubeedge/pkg/testtools"
 )
 
 var (
@@ -236,49 +235,41 @@ func TestStart(t *testing.T) {
 
 // TestDealTwinSync is function to test dealTwinSync
 func TestDealTwinSync(t *testing.T) {
-	content, _ := json.Marshal(dttype.DeviceTwinUpdate{BaseMessage: dttype.BaseMessage{EventID: event1}})
-	contentKeyTwin, _ := json.Marshal(keyTwinUpdateFunc())
-	context := contextFunc(deviceB)
+	content, contentKeyTwin, context := generateTwinContent(event1, deviceB)
 
-	tests := []struct {
-		name     string
-		context  *dtcontext.DTContext
-		resource string
-		msg      interface{}
-		err      error
-	}{
+	tests := CasesMsgWorkerStr{
 		{
 			name:    "TestDealTwinSync(): Case 1: msg not Message type",
 			context: &dtcontext.DTContext{},
 			msg: model.Message{
 				Content: dttype.BaseMessage{EventID: event1},
 			},
-			err: errors.New("msg not Message type"),
+			wantErr: errors.New("msg not Message type"),
 		},
 		{
 			name:    "TestDealTwinSync(): Case 2: invalid message content",
 			context: &dtcontext.DTContext{},
 			msg:     msgTypeFunc(dttype.BaseMessage{EventID: event1}),
-			err:     errors.New("invalid message content"),
+			wantErr: errors.New("invalid message content"),
 		},
 		{
 			name:    "TestDealTwinSync(): Case 3: Unmarshal update request body failed",
 			context: &dtcontext.DTContext{},
 			msg:     msgTypeFunc(content),
-			err:     dttype.ErrorUpdate,
+			wantErr: dttype.ErrorUpdate,
 		},
 		{
 			name:     "TestDealTwinSync(): Case 4: Success case",
 			context:  &context,
 			resource: deviceB,
 			msg:      msgTypeFunc(contentKeyTwin),
-			err:      nil,
+			wantErr:  nil,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := dealTwinSync(test.context, test.resource, test.msg); !reflect.DeepEqual(err, test.err) {
-				t.Errorf("DTManager.TestDealTwinSync() case failed: got = %v, Want = %v", err, test.err)
+			if err := dealTwinSync(test.context, test.resource, test.msg); !reflect.DeepEqual(err, test.wantErr) {
+				t.Errorf("DTManager.TestDealTwinSync() case failed: got = %v, Want = %v", err, test.wantErr)
 			}
 		})
 	}
@@ -286,49 +277,42 @@ func TestDealTwinSync(t *testing.T) {
 
 // TestDealTwinGet is function to test dealTwinGet
 func TestDealTwinGet(t *testing.T) {
-	contentKeyTwin, _ := json.Marshal(keyTwinUpdateFunc())
-	context := contextFunc(deviceB)
+	_, contentKeyTwin, context := generateTwinContent(event1, deviceB)
 
-	tests := []struct {
-		name     string
-		context  *dtcontext.DTContext
-		resource string
-		msg      interface{}
-		err      error
-	}{
+	tests := CasesMsgWorkerStr{
 		{
 			name:    "TestDealTwinGet(): Case 1: msg not Message type",
 			context: &dtcontext.DTContext{},
 			msg: model.Message{
 				Content: dttype.BaseMessage{EventID: event1},
 			},
-			err: errors.New("msg not Message type"),
+			wantErr: errors.New("msg not Message type"),
 		},
 		{
 			name:    "TestDealTwinGet(): Case 2: invalid message content",
 			context: &dtcontext.DTContext{},
 			msg:     msgTypeFunc(dttype.BaseMessage{EventID: event1}),
-			err:     errors.New("invalid message content"),
+			wantErr: errors.New("invalid message content"),
 		},
 		{
 			name:     "TestDealTwinGet(): Case 3: Success; Unmarshal twin info fails in DealGetTwin()",
 			context:  &context,
 			resource: deviceB,
 			msg:      msgTypeFunc([]byte("")),
-			err:      nil,
+			wantErr:  nil,
 		},
 		{
 			name:     "TestDealTwinGet(): Case 4: Success; Device not found while getting twin in DealGetTwin()",
 			context:  &context,
 			resource: deviceB,
 			msg:      msgTypeFunc(contentKeyTwin),
-			err:      nil,
+			wantErr:  nil,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := dealTwinGet(test.context, test.resource, test.msg); !reflect.DeepEqual(err, test.err) {
-				t.Errorf("DTManager.TestDealTwinGet() case failed: got = %v, Want = %v", err, test.err)
+			if err := dealTwinGet(test.context, test.resource, test.msg); !reflect.DeepEqual(err, test.wantErr) {
+				t.Errorf("DTManager.TestDealTwinGet() case failed: got = %v, Want = %v", err, test.wantErr)
 			}
 		})
 	}
@@ -336,50 +320,42 @@ func TestDealTwinGet(t *testing.T) {
 
 // TestDealTwinUpdate is function to test dealTwinUpdate
 func TestDealTwinUpdate(t *testing.T) {
-	content, _ := json.Marshal(dttype.DeviceTwinUpdate{BaseMessage: dttype.BaseMessage{EventID: event1}})
-	contentKeyTwin, _ := json.Marshal(keyTwinUpdateFunc())
-	context := contextFunc(deviceB)
+	content, contentKeyTwin, context := generateTwinContent(event1, deviceB)
 
-	tests := []struct {
-		name     string
-		context  *dtcontext.DTContext
-		resource string
-		msg      interface{}
-		err      error
-	}{
+	tests := CasesMsgWorkerStr{
 		{
 			name:    "TestDealTwinUpdate(): Case 1: msg not Message type",
 			context: &dtcontext.DTContext{},
 			msg: model.Message{
 				Content: dttype.BaseMessage{EventID: event1},
 			},
-			err: errors.New("msg not Message type"),
+			wantErr: errors.New("msg not Message type"),
 		},
 		{
 			name:    "TestDealTwinUpdate(): Case 2: invalid message content",
 			context: &dtcontext.DTContext{},
 			msg:     msgTypeFunc(dttype.BaseMessage{EventID: event1}),
-			err:     errors.New("invalid message content"),
+			wantErr: errors.New("invalid message content"),
 		},
 		{
 			name:     "TestDealTwinUpdate(): Case 3: Success; Unmarshal update request body fails in Updated()",
 			context:  &context,
 			resource: deviceB,
 			msg:      msgTypeFunc(content),
-			err:      nil,
+			wantErr:  nil,
 		},
 		{
 			name:     "TestDealTwinUpdate(): Case 4: Success; Begin to update twin of the device in Updated()",
 			context:  &context,
 			resource: deviceA,
 			msg:      msgTypeFunc(contentKeyTwin),
-			err:      nil,
+			wantErr:  nil,
 		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			if err := dealTwinUpdate(test.context, test.resource, test.msg); !reflect.DeepEqual(err, test.err) {
-				t.Errorf("DTManager.TestDealTwinUpdate() case failed: got = %v, Want = %v", err, test.err)
+			if err := dealTwinUpdate(test.context, test.resource, test.msg); !reflect.DeepEqual(err, test.wantErr) {
+				t.Errorf("DTManager.TestDealTwinUpdate() case failed: got = %v, Want = %v", err, test.wantErr)
 			}
 		})
 	}
@@ -387,16 +363,7 @@ func TestDealTwinUpdate(t *testing.T) {
 
 // TestDealDeviceTwin is function to test DealDeviceTwin
 func TestDealDeviceTwin(t *testing.T) {
-	var mockOrmer *beego.MockOrmer
-	var mockQuerySeter *beego.MockQuerySeter
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	mockOrmer = beego.NewMockOrmer(mockCtrl)
-	mockQuerySeter = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = mockOrmer
-	dbm.DefaultOrmFunc = func() orm.Ormer {
-		return mockOrmer
-	}
+	mockOrmer, mockQuerySeter := testtools.InitOrmerMock(t)
 
 	str := typeString
 	optionTrue := true
@@ -450,6 +417,7 @@ func TestDealDeviceTwin(t *testing.T) {
 		allReturnInt     int64
 		allReturnErr     error
 		queryTableReturn orm.QuerySeter
+		beginReturn      orm.TxOrmer
 
 		rollbackNums int
 		beginNums    int
@@ -499,13 +467,8 @@ func TestDealDeviceTwin(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mockOrmer.EXPECT().Rollback().Return(nil).Times(test.rollbackNums)
-			mockOrmer.EXPECT().Begin().Return(nil).MaxTimes(test.beginNums)
-			mockOrmer.EXPECT().Commit().Return(nil).MaxTimes(test.commitNums)
-			mockOrmer.EXPECT().Insert(gomock.Any()).Return(test.allReturnInt, test.allReturnErr).MaxTimes(test.insertNums)
-			mockQuerySeter.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(test.filterReturn).Times(test.filterNums)
-			mockQuerySeter.EXPECT().Delete().Return(test.allReturnInt, test.allReturnErr).Times(test.deleteNums)
-			mockQuerySeter.EXPECT().Update(gomock.Any()).Return(test.allReturnInt, test.allReturnErr).Times(test.updateNums)
+			mockOrmer.EXPECT().DoTx(gomock.Any()).Return(test.allReturnErr).Times(test.insertNums)
+			mockOrmer.EXPECT().DoTx(gomock.Any()).Return(test.allReturnErr).Times(test.deleteNums)
 			mockOrmer.EXPECT().QueryTable(gomock.Any()).Return(test.queryTableReturn).Times(test.queryNums)
 			if err := DealDeviceTwin(test.context, test.deviceID, test.eventID, test.msgTwin, test.dealType); !reflect.DeepEqual(err, test.err) {
 				t.Errorf("DTManager.TestDealDeviceTwin() case failed: got = %v, Want = %v", err, test.err)
@@ -516,16 +479,7 @@ func TestDealDeviceTwin(t *testing.T) {
 
 // TestDealDeviceTwinResult is function to test DealDeviceTwin when dealTwinResult.Err is not nil
 func TestDealDeviceTwinResult(t *testing.T) {
-	var mockOrmer *beego.MockOrmer
-	var mockQuerySeter *beego.MockQuerySeter
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	mockOrmer = beego.NewMockOrmer(mockCtrl)
-	mockQuerySeter = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = mockOrmer
-	dbm.DefaultOrmFunc = func() orm.Ormer {
-		return mockOrmer
-	}
+	mockOrmer, mockQuerySeter := testtools.InitOrmerMock(t)
 
 	str := typeString
 	optionTrue := true
@@ -608,16 +562,7 @@ func TestDealDeviceTwinResult(t *testing.T) {
 
 // TestDealDeviceTwinTrans is function to test DealDeviceTwin when DeviceTwinTrans() return error
 func TestDealDeviceTwinTrans(t *testing.T) {
-	var mockOrmer *beego.MockOrmer
-	var mockQuerySeter *beego.MockQuerySeter
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	mockOrmer = beego.NewMockOrmer(mockCtrl)
-	mockQuerySeter = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = mockOrmer
-	dbm.DefaultOrmFunc = func() orm.Ormer {
-		return mockOrmer
-	}
+	mockOrmer, mockQuerySeter := testtools.InitOrmerMock(t)
 
 	str := typeString
 	optionTrue := true
@@ -696,12 +641,9 @@ func TestDealDeviceTwinTrans(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			mockOrmer.EXPECT().Rollback().Return(nil).Times(5)
-			mockOrmer.EXPECT().Commit().Return(nil).Times(0)
-			mockOrmer.EXPECT().Begin().Return(nil).Times(5)
+			mockOrmer.EXPECT().DoTx(gomock.Any()).Return(test.insertReturnErr).Times(5)
+			mockOrmer.EXPECT().DoTx(gomock.Any()).Return(test.deleteReturnErr).Times(0)
 			mockQuerySeter.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(test.filterReturn).Times(0)
-			mockOrmer.EXPECT().Insert(gomock.Any()).Return(test.insertReturnInt, test.insertReturnErr).Times(5)
-			mockQuerySeter.EXPECT().Delete().Return(test.deleteReturnInt, test.deleteReturnErr).Times(0)
 			mockQuerySeter.EXPECT().Update(gomock.Any()).Return(test.updateReturnInt, test.updateReturnErr).Times(0)
 			mockQuerySeter.EXPECT().All(gomock.Any()).SetArg(0, *fakeDevice).Return(test.allReturnInt, test.allReturnErr).Times(1)
 			mockQuerySeter.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(test.filterReturn).Times(1)
@@ -1566,4 +1508,11 @@ func TestDealMsgTwin(t *testing.T) {
 			}
 		})
 	}
+}
+
+func generateTwinContent(eventID, deviceID string) ([]byte, []byte, dtcontext.DTContext) {
+	content, _ := json.Marshal(dttype.DeviceTwinUpdate{BaseMessage: dttype.BaseMessage{EventID: eventID}})
+	contentKeyTwin, _ := json.Marshal(keyTwinUpdateFunc())
+	context := contextFunc(deviceID)
+	return content, contentKeyTwin, context
 }

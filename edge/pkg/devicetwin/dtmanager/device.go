@@ -23,13 +23,13 @@ var (
 	deviceActionCallBack map[string]CallBack
 )
 
-//DeviceWorker deal device event
+// DeviceWorker deal device event
 type DeviceWorker struct {
 	Worker
 	Group string
 }
 
-//Start worker
+// Start worker
 func (dw DeviceWorker) Start() {
 	initDeviceActionCallBack()
 	for {
@@ -91,11 +91,15 @@ func dealDeviceStateUpdate(context *dtcontext.DTContext, resource string, msg in
 	// state refers to definition in mappers-go/pkg/common/const.go
 	state := strings.ToLower(updatedDevice.State)
 	switch state {
-	case "online", "offline", "ok", "unknown", "disconnected":
+	case dtcommon.DeviceStatusOnline, dtcommon.DeviceStatusOffline, dtcommon.DeviceStatusOK,
+		dtcommon.DeviceStatusUnknown, dtcommon.DeviceStatusUnhealthy:
 	default:
 		return nil
 	}
-	lastOnline := time.Now().Format("2006-01-02 15:04:05")
+	var lastOnline string
+	if state == dtcommon.DeviceStatusOnline || state == dtcommon.DeviceStatusOK {
+		lastOnline = time.Now().UTC().Format(time.RFC3339)
+	}
 	for i := 1; i <= dtcommon.RetryTimes; i++ {
 		err = dtclient.UpdateDeviceFields(
 			device.ID,
@@ -113,7 +117,7 @@ func dealDeviceStateUpdate(context *dtcontext.DTContext, resource string, msg in
 	}
 	device.State = updatedDevice.State
 	device.LastOnline = lastOnline
-	payload, err := dttype.BuildDeviceState(dttype.BuildBaseMessage(), *device)
+	payload, err := dttype.BuildDeviceCloudMsgState(dttype.BuildBaseMessage(), *device)
 	if err != nil {
 		return err
 	}
@@ -151,7 +155,7 @@ func dealDeviceAttrUpdate(context *dtcontext.DTContext, resource string, msg int
 	return nil
 }
 
-//UpdateDeviceAttr update device attributes
+// UpdateDeviceAttr update device attributes
 func UpdateDeviceAttr(context *dtcontext.DTContext, deviceID string, attributes map[string]*dttype.MsgAttr, baseMessage dttype.BaseMessage, dealType int) (interface{}, error) {
 	klog.Infof("Begin to update attributes of the device %s", deviceID)
 	var err error
@@ -167,10 +171,10 @@ func UpdateDeviceAttr(context *dtcontext.DTContext, deviceID string, attributes 
 	if dealAttrResult.Err != nil {
 		return nil, nil
 	}
-	add, delete, update, result := dealAttrResult.Add, dealAttrResult.Delete, dealAttrResult.Update, dealAttrResult.Result
-	if len(add) != 0 || len(delete) != 0 || len(update) != 0 {
+	add, deviceAttrDelete, update, result := dealAttrResult.Add, dealAttrResult.Delete, dealAttrResult.Update, dealAttrResult.Result
+	if len(add) != 0 || len(deviceAttrDelete) != 0 || len(update) != 0 {
 		for i := 1; i <= dtcommon.RetryTimes; i++ {
-			err = dtclient.DeviceAttrTrans(add, delete, update)
+			err = dtclient.DeviceAttrTrans(add, deviceAttrDelete, update)
 			if err == nil {
 				break
 			}
@@ -198,7 +202,7 @@ func UpdateDeviceAttr(context *dtcontext.DTContext, deviceID string, attributes 
 	return nil, nil
 }
 
-//DealMsgAttr get diff,0:update, 1:detail
+// DealMsgAttr get diff,0:update, 1:detail
 func DealMsgAttr(context *dtcontext.DTContext, deviceID string, msgAttrs map[string]*dttype.MsgAttr, dealType int) dttype.DealAttrResult {
 	device, ok := context.GetDevice(deviceID)
 	if !ok {

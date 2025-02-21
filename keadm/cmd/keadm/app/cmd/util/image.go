@@ -19,21 +19,20 @@ package util
 import (
 	"context"
 	"fmt"
-	"io"
 	"path/filepath"
+	"strings"
 	"time"
 
-	dockertypes "github.com/docker/docker/api/types"
-	dockercontainer "github.com/docker/docker/api/types/container"
-	"github.com/docker/docker/api/types/filters"
-	dockerclient "github.com/docker/docker/client"
-	"github.com/docker/go-connections/nat"
+	"github.com/google/uuid"
+	oteltrace "go.opentelemetry.io/otel/trace"
 	internalapi "k8s.io/cri-api/pkg/apis"
-	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1alpha2"
+	runtimeapi "k8s.io/cri-api/pkg/apis/runtime/v1"
 	"k8s.io/klog/v2"
+	"k8s.io/kubernetes/pkg/kubelet/cm"
 	"k8s.io/kubernetes/pkg/kubelet/cri/remote"
-	kubetypes "k8s.io/kubernetes/pkg/kubelet/types"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
+	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/pkg/image"
 )
 
@@ -42,211 +41,87 @@ var mqttLabel = map[string]string{"io.kubeedge.edgecore/mqtt": image.EdgeMQTT}
 
 type ContainerRuntime interface {
 	PullImages(images []string) error
+	PullImage(image string, authConfig *runtimeapi.AuthConfig, sandboxConfig *runtimeapi.PodSandboxConfig) error
 	CopyResources(edgeImage string, files map[string]string) error
 	RunMQTT(mqttImage string) error
 	RemoveMQTT() error
+	GetImageDigest(image string) (string, error)
 }
 
-func NewContainerRuntime(runtimeType string, endpoint string) (ContainerRuntime, error) {
+func NewContainerRuntime(endpoint, cgroupDriver string) (ContainerRuntime, error) {
 	var runtime ContainerRuntime
-	switch runtimeType {
-	case kubetypes.DockerContainerRuntime:
-		cli, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv)
-		if err != nil {
-			return runtime, fmt.Errorf("init docker client failed: %v", err)
-		}
-
-		ctx := context.Background()
-		cli.NegotiateAPIVersion(ctx)
-
-		runtime = &DockerRuntime{
-			Client: cli,
-			ctx:    ctx,
-		}
-	case kubetypes.RemoteContainerRuntime:
-		imageService, err := remote.NewRemoteImageService(endpoint, time.Second*10)
-		if err != nil {
-			return runtime, err
-		}
-		runtimeService, err := remote.NewRemoteRuntimeService(endpoint, time.Second*10)
-		if err != nil {
-			return runtime, err
-		}
-		runtime = &CRIRuntime{
-			endpoint:            endpoint,
-			ImageManagerService: imageService,
-			RuntimeService:      runtimeService,
-		}
-	default:
-		return runtime, fmt.Errorf("unsupport CRI runtime: %s", runtimeType)
+	imageService, err := remote.NewRemoteImageService(endpoint, time.Second*10, oteltrace.NewNoopTracerProvider())
+	if err != nil {
+		return runtime, err
+	}
+	runtimeService, err := remote.NewRemoteRuntimeService(endpoint, time.Second*10, oteltrace.NewNoopTracerProvider())
+	if err != nil {
+		return runtime, err
+	}
+	runtime = &CRIRuntime{
+		endpoint:            endpoint,
+		cgroupDriver:        cgroupDriver,
+		ImageManagerService: imageService,
+		RuntimeService:      runtimeService,
+		ctx:                 context.Background(),
 	}
 
 	return runtime, nil
 }
 
-type DockerRuntime struct {
-	Client *dockerclient.Client
-	ctx    context.Context
-}
-
-func (runtime *DockerRuntime) PullImages(images []string) error {
-	for _, image := range images {
-		fmt.Printf("Pulling %s ...\n", image)
-		args := filters.NewArgs()
-		args.Add("reference", image)
-		list, err := runtime.Client.ImageList(runtime.ctx, dockertypes.ImageListOptions{Filters: args})
-		if err != nil {
-			return err
-		}
-		if len(list) > 0 {
-			continue
-		}
-
-		rc, err := runtime.Client.ImagePull(runtime.ctx, image, dockertypes.ImagePullOptions{})
-		if err != nil {
-			return err
-		}
-
-		if _, err := io.Copy(io.Discard, rc); err != nil {
-			return err
-		}
-		if err := rc.Close(); err != nil {
-			return err
-		}
-		fmt.Printf("Successfully pulled %s\n", image)
-	}
-
-	return nil
-}
-
-func (runtime *DockerRuntime) RunMQTT(mqttImage string) error {
-	_, portMap, err := nat.ParsePortSpecs([]string{
-		"1883:1883",
-		"9001:9001",
-	})
-	if err != nil {
-		return err
-	}
-
-	hostConfig := &dockercontainer.HostConfig{
-		PortBindings: portMap,
-		RestartPolicy: dockercontainer.RestartPolicy{
-			Name: "unless-stopped",
-		},
-		Binds: []string{
-			filepath.Join(KubeEdgeSocketPath, image.EdgeMQTT) + ":/mosquitto",
-		},
-	}
-	config := &dockercontainer.Config{Image: mqttImage}
-
-	container, err := runtime.Client.ContainerCreate(runtime.ctx, config, hostConfig, nil, nil, image.EdgeMQTT)
-	if err != nil {
-		return err
-	}
-	return runtime.Client.ContainerStart(runtime.ctx, container.ID, dockertypes.ContainerStartOptions{})
-}
-
-func (runtime *DockerRuntime) RemoveMQTT() error {
-	options := dockertypes.ContainerListOptions{
-		All: true,
-	}
-	options.Filters = filters.NewArgs()
-	options.Filters.Add("ancestor", "eclipse-mosquitto:1.6.15")
-
-	mqttContainers, err := runtime.Client.ContainerList(runtime.ctx, options)
-	if err != nil {
-		fmt.Printf("List MQTT containers failed: %v\n", err)
-		return err
-	}
-
-	for _, c := range mqttContainers {
-		err = runtime.Client.ContainerRemove(runtime.ctx, c.ID, dockertypes.ContainerRemoveOptions{RemoveVolumes: true, Force: true})
-		if err != nil {
-			fmt.Printf("failed to remove MQTT container: %v\n", err)
-		}
-	}
-
-	return nil
-}
-
-// CopyResources copies binary and configuration file from the image to the host.
-// dirs/files map: key is container file path, value is host file path
-// The command it executes are as follows:
-//
-// docker run -v /usr/local/bin:/tmp/usr/local/bin <IMAGE-NAME> \
-// bash -c cp /usr/local/bin/edgecore:/tmp/usr/local/bin/edgecore
-// TODO: support copy dirs, so that users can copy customized files in dir /etc/kubeedge of image kubeedge/installation-package
-func (runtime *DockerRuntime) CopyResources(image string, files map[string]string) error {
-	if len(files) == 0 {
-		return fmt.Errorf("no resources need copying")
-	}
-
-	copyCmd := copyResourcesCmd(files)
-
-	config := &dockercontainer.Config{
-		Image: image,
-		Cmd: []string{
-			"/bin/sh",
-			"-c",
-			copyCmd,
-		},
-	}
-
-	var binds []string
-	for _, hostPath := range files {
-		binds = append(binds, filepath.Dir(hostPath)+":"+filepath.Join("/tmp", filepath.Dir(hostPath)))
-	}
-
-	hostConfig := &dockercontainer.HostConfig{
-		Binds: binds,
-	}
-
-	// Randomly generate container names to prevent duplicate names.
-	container, err := runtime.Client.ContainerCreate(runtime.ctx, config, hostConfig, nil, nil, "")
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if err := runtime.Client.ContainerRemove(runtime.ctx, container.ID, dockertypes.ContainerRemoveOptions{}); err != nil {
-			klog.V(3).ErrorS(err, "Remove container failed", "containerID", container.ID)
-		}
-	}()
-
-	if err := runtime.Client.ContainerStart(runtime.ctx, container.ID, dockertypes.ContainerStartOptions{}); err != nil {
-		return fmt.Errorf("container start failed: %v", err)
-	}
-
-	statusCh, errCh := runtime.Client.ContainerWait(runtime.ctx, container.ID, "")
-	select {
-	case err := <-errCh:
-		klog.Errorf("container wait error %v", err)
-	case <-statusCh:
-	}
-	return nil
-}
-
 type CRIRuntime struct {
 	endpoint            string
+	cgroupDriver        string
 	ImageManagerService internalapi.ImageManagerService
 	RuntimeService      internalapi.RuntimeService
+	ctx                 context.Context
+}
+
+func convertCRIImage(image string) string {
+	imageSeg := strings.Split(image, "/")
+	if len(imageSeg) == 1 {
+		return "docker.io/library/" + image
+	} else if len(imageSeg) == 2 {
+		return "docker.io/" + image
+	}
+	return image
 }
 
 func (runtime *CRIRuntime) PullImages(images []string) error {
 	for _, image := range images {
 		fmt.Printf("Pulling %s ...\n", image)
-		imageSpec := &runtimeapi.ImageSpec{Image: image}
-		status, err := runtime.ImageManagerService.ImageStatus(imageSpec)
+		err := runtime.PullImage(image, nil, nil)
 		if err != nil {
 			return err
 		}
-		if status == nil || status.Id == "" {
-			if _, err := runtime.ImageManagerService.PullImage(imageSpec, nil, nil); err != nil {
-				return err
-			}
-		}
 		fmt.Printf("Successfully pulled %s\n", image)
 	}
+	return nil
+}
 
+func (runtime *CRIRuntime) GetImageDigest(image string) (string, error) {
+	image = convertCRIImage(image)
+	imageSpec := &runtimeapi.ImageSpec{Image: image}
+	imageStatus, err := runtime.ImageManagerService.ImageStatus(runtime.ctx, imageSpec, true)
+	if err != nil {
+		return "", err
+	}
+	imageDigest := imageStatus.Image.Spec.Image
+	return imageDigest, nil
+}
+
+func (runtime *CRIRuntime) PullImage(image string, authConfig *runtimeapi.AuthConfig, sandboxConfig *runtimeapi.PodSandboxConfig) error {
+	image = convertCRIImage(image)
+	imageSpec := &runtimeapi.ImageSpec{Image: image}
+	status, err := runtime.ImageManagerService.ImageStatus(runtime.ctx, imageSpec, true)
+	if err != nil {
+		return err
+	}
+	if status == nil || status.Image == nil {
+		if _, err := runtime.ImageManagerService.PullImage(runtime.ctx, imageSpec, authConfig, sandboxConfig); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -254,14 +129,30 @@ func (runtime *CRIRuntime) PullImages(images []string) error {
 // The same way as func (runtime *DockerRuntime) CopyResources
 func (runtime *CRIRuntime) CopyResources(edgeImage string, files map[string]string) error {
 	psc := &runtimeapi.PodSandboxConfig{
-		Metadata: &runtimeapi.PodSandboxMetadata{Name: KubeEdgeBinaryName},
+		Metadata: &runtimeapi.PodSandboxMetadata{
+			Name:      KubeEdgeBinaryName,
+			Uid:       uuid.New().String(),
+			Namespace: constants.SystemNamespace,
+		},
+		Linux: &runtimeapi.LinuxPodSandboxConfig{
+			SecurityContext: &runtimeapi.LinuxSandboxSecurityContext{
+				NamespaceOptions: &runtimeapi.NamespaceOption{
+					Network: runtimeapi.NamespaceMode_NODE,
+				},
+				Privileged: true,
+			},
+		},
 	}
-	sandbox, err := runtime.RuntimeService.RunPodSandbox(psc, "")
+	if runtime.cgroupDriver == v1alpha2.CGroupDriverSystemd {
+		cgroupName := cm.NewCgroupName(cm.CgroupName{"kubeedge", "setup", "podcopyresource"})
+		psc.Linux.CgroupParent = cgroupName.ToSystemd()
+	}
+	sandbox, err := runtime.RuntimeService.RunPodSandbox(runtime.ctx, psc, "")
 	if err != nil {
 		return err
 	}
 	defer func() {
-		if err := runtime.RuntimeService.RemovePodSandbox(sandbox); err != nil {
+		if err := runtime.RuntimeService.RemovePodSandbox(runtime.ctx, sandbox); err != nil {
 			klog.V(3).ErrorS(err, "Remove pod sandbox failed", "containerID", sandbox)
 		}
 	}()
@@ -289,18 +180,23 @@ func (runtime *CRIRuntime) CopyResources(edgeImage string, files map[string]stri
 			"sleep infinity",
 		},
 		Mounts: mounts,
+		Linux: &runtimeapi.LinuxContainerConfig{
+			SecurityContext: &runtimeapi.LinuxContainerSecurityContext{
+				Privileged: true,
+			},
+		},
 	}
-	containerID, err := runtime.RuntimeService.CreateContainer(sandbox, containerConfig, psc)
+	containerID, err := runtime.RuntimeService.CreateContainer(runtime.ctx, sandbox, containerConfig, psc)
 	if err != nil {
 		return fmt.Errorf("create container failed: %v", err)
 	}
 	defer func() {
-		if err := runtime.RuntimeService.RemoveContainer(containerID); err != nil {
+		if err := runtime.RuntimeService.RemoveContainer(runtime.ctx, containerID); err != nil {
 			klog.V(3).ErrorS(err, "Remove container failed", "containerID", containerID)
 		}
 	}()
 
-	err = runtime.RuntimeService.StartContainer(containerID)
+	err = runtime.RuntimeService.StartContainer(runtime.ctx, containerID)
 	if err != nil {
 		return fmt.Errorf("start container failed: %v", err)
 	}
@@ -311,7 +207,7 @@ func (runtime *CRIRuntime) CopyResources(edgeImage string, files map[string]stri
 		"-c",
 		copyCmd,
 	}
-	stdout, stderr, err := runtime.RuntimeService.ExecSync(containerID, cmd, 30*time.Second)
+	stdout, stderr, err := runtime.RuntimeService.ExecSync(runtime.ctx, containerID, cmd, 30*time.Second)
 	if err != nil {
 		return fmt.Errorf("failed to exec copy cmd, err: %v, stderr: %s, stdout: %s", err, string(stderr), string(stdout))
 	}
@@ -320,6 +216,7 @@ func (runtime *CRIRuntime) CopyResources(edgeImage string, files map[string]stri
 }
 
 func (runtime *CRIRuntime) RunMQTT(mqttImage string) error {
+	mqttImage = convertCRIImage(mqttImage)
 	psc := &runtimeapi.PodSandboxConfig{
 		Metadata: &runtimeapi.PodSandboxMetadata{Name: image.EdgeMQTT},
 		PortMappings: []*runtimeapi.PortMapping{
@@ -333,8 +230,17 @@ func (runtime *CRIRuntime) RunMQTT(mqttImage string) error {
 			},
 		},
 		Labels: mqttLabel,
+		Linux: &runtimeapi.LinuxPodSandboxConfig{
+			SecurityContext: &runtimeapi.LinuxSandboxSecurityContext{
+				NamespaceOptions: &runtimeapi.NamespaceOption{
+					Network: runtimeapi.NamespaceMode_POD,
+					Pid:     runtimeapi.NamespaceMode_CONTAINER,
+					Ipc:     runtimeapi.NamespaceMode_POD,
+				},
+			},
+		},
 	}
-	sandbox, err := runtime.RuntimeService.RunPodSandbox(psc, "")
+	sandbox, err := runtime.RuntimeService.RunPodSandbox(runtime.ctx, psc, "")
 	if err != nil {
 		return err
 	}
@@ -351,11 +257,11 @@ func (runtime *CRIRuntime) RunMQTT(mqttImage string) error {
 			},
 		},
 	}
-	containerID, err := runtime.RuntimeService.CreateContainer(sandbox, containerConfig, psc)
+	containerID, err := runtime.RuntimeService.CreateContainer(runtime.ctx, sandbox, containerConfig, psc)
 	if err != nil {
 		return err
 	}
-	return runtime.RuntimeService.StartContainer(containerID)
+	return runtime.RuntimeService.StartContainer(runtime.ctx, containerID)
 }
 
 func (runtime *CRIRuntime) RemoveMQTT() error {
@@ -363,7 +269,7 @@ func (runtime *CRIRuntime) RemoveMQTT() error {
 		LabelSelector: mqttLabel,
 	}
 
-	sandbox, err := runtime.RuntimeService.ListPodSandbox(sandboxFilter)
+	sandbox, err := runtime.RuntimeService.ListPodSandbox(runtime.ctx, sandboxFilter)
 	if err != nil {
 		fmt.Printf("List MQTT containers failed: %v\n", err)
 		return err
@@ -374,7 +280,7 @@ func (runtime *CRIRuntime) RemoveMQTT() error {
 		// RemovePodSandbox removes the sandbox. If there are running containers in the
 		// sandbox, they should be forcibly removed.
 		// so we can remove mqtt containers totally.
-		err = runtime.RuntimeService.RemovePodSandbox(c.Id)
+		err = runtime.RuntimeService.RemovePodSandbox(runtime.ctx, c.Id)
 		if err != nil {
 			fmt.Printf("failed to remove MQTT container: %v\n", err)
 		}

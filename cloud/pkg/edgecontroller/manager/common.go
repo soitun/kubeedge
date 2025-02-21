@@ -15,7 +15,8 @@ type Manager interface {
 
 // CommonResourceEventHandler can be used by configmapManager and podManager
 type CommonResourceEventHandler struct {
-	events chan watch.Event
+	events      chan watch.Event
+	eventFilter EventFilter
 }
 
 func (c *CommonResourceEventHandler) obj2Event(t watch.EventType, obj interface{}) {
@@ -35,21 +36,30 @@ func (c *CommonResourceEventHandler) obj2Event(t watch.EventType, obj interface{
 }
 
 // OnAdd handle Add event
-func (c *CommonResourceEventHandler) OnAdd(obj interface{}) {
+func (c *CommonResourceEventHandler) OnAdd(obj interface{}, _ bool) {
+	if c.eventFilter != nil && !c.eventFilter.Create(obj) {
+		return
+	}
 	c.obj2Event(watch.Added, obj)
 }
 
 // OnUpdate handle Update event
 func (c *CommonResourceEventHandler) OnUpdate(oldObj, newObj interface{}) {
+	if c.eventFilter != nil && !c.eventFilter.Update(oldObj, newObj) {
+		return
+	}
 	c.obj2Event(watch.Modified, newObj)
 }
 
 // OnDelete handle Delete event
 func (c *CommonResourceEventHandler) OnDelete(obj interface{}) {
+	if c.eventFilter != nil && !c.eventFilter.Delete(obj) {
+		return
+	}
 	c.obj2Event(watch.Deleted, obj)
 }
 
 // NewCommonResourceEventHandler create CommonResourceEventHandler used by configmapManager and podManager
-func NewCommonResourceEventHandler(events chan watch.Event) *CommonResourceEventHandler {
-	return &CommonResourceEventHandler{events: events}
+func NewCommonResourceEventHandler(events chan watch.Event, filter EventFilter) *CommonResourceEventHandler {
+	return &CommonResourceEventHandler{events: events, eventFilter: filter}
 }

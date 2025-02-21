@@ -1,13 +1,13 @@
 package v2
 
 import (
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 )
 
-//constant metatable name reference
+// constant metatable name reference
 const (
 	NewMetaTableName = "meta_v2"
 

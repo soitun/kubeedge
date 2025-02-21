@@ -9,6 +9,7 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
+	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao"
 )
 
 // ConfigMapsGetter has a method to return a ConfigMapInterface.
@@ -37,50 +38,52 @@ func newConfigMaps(namespace string, s SendInterface) *configMaps {
 	}
 }
 
-func (c *configMaps) Create(cm *api.ConfigMap) (*api.ConfigMap, error) {
+func (c *configMaps) Create(*api.ConfigMap) (*api.ConfigMap, error) {
 	return nil, nil
 }
 
-func (c *configMaps) Update(cm *api.ConfigMap) error {
+func (c *configMaps) Update(*api.ConfigMap) error {
 	return nil
 }
 
-func (c *configMaps) Delete(name string) error {
+func (c *configMaps) Delete(string) error {
 	return nil
 }
 
 func (c *configMaps) Get(name string) (*api.ConfigMap, error) {
 	resource := fmt.Sprintf("%s/%s/%s", c.namespace, model.ResourceTypeConfigmap, name)
-	configMapMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.QueryOperation, nil)
-	msg, err := c.send.SendSync(configMapMsg)
-	if err != nil {
-		return nil, fmt.Errorf("get configmap from metaManager failed, err: %v", err)
+	remoteGet := func() (*api.ConfigMap, error) {
+		configMapMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.QueryOperation, nil)
+		msg, err := c.send.SendSync(configMapMsg)
+		if err != nil {
+			return nil, fmt.Errorf("get configmap from metaManager failed, err: %v", err)
+		}
+		errContent, ok := msg.GetContent().(error)
+		if ok {
+			return nil, errContent
+		}
+		content, err := msg.GetContentData()
+		if err != nil {
+			return nil, fmt.Errorf("parse message to configmap failed, err: %v", err)
+		}
+		return handleConfigMapFromMetaManager(content)
 	}
 
-	content, err := msg.GetContentData()
-	if err != nil {
-		return nil, fmt.Errorf("parse message to configmap failed, err: %v", err)
+	metas, err := dao.QueryMeta("key", resource)
+	if err != nil || len(*metas) == 0 {
+		return remoteGet()
 	}
 
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
-		return handleConfigMapFromMetaDB(content)
-	}
-	return handleConfigMapFromMetaManager(content)
+	return handleConfigMapFromMetaDB(metas)
 }
 
-func handleConfigMapFromMetaDB(content []byte) (*api.ConfigMap, error) {
-	var lists []string
-	err := json.Unmarshal(content, &lists)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal message to ConfigMap list from db failed, err: %v", err)
-	}
-
-	if len(lists) != 1 {
-		return nil, fmt.Errorf("ConfigMap length from meta db is %d", len(lists))
+func handleConfigMapFromMetaDB(lists *[]string) (*api.ConfigMap, error) {
+	if len(*lists) != 1 {
+		return nil, fmt.Errorf("ConfigMap length from meta db is %d", len(*lists))
 	}
 
 	var configMap api.ConfigMap
-	err = json.Unmarshal([]byte(lists[0]), &configMap)
+	err := json.Unmarshal([]byte((*lists)[0]), &configMap)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to ConfigMap from db failed, err: %v", err)
 	}

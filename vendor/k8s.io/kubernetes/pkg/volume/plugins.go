@@ -39,7 +39,6 @@ import (
 	storagelistersv1 "k8s.io/client-go/listers/storage/v1"
 	"k8s.io/client-go/tools/cache"
 	"k8s.io/client-go/tools/record"
-	proxyutil "k8s.io/kubernetes/pkg/proxy/util"
 	"k8s.io/kubernetes/pkg/volume/util/hostutil"
 	"k8s.io/kubernetes/pkg/volume/util/recyclerclient"
 	"k8s.io/kubernetes/pkg/volume/util/subpath"
@@ -52,9 +51,6 @@ type ProbeEvent struct {
 	Op         ProbeOperation // The operation to the plugin
 }
 
-// CSIVolumePhaseType stores information about CSI volume path.
-type CSIVolumePhaseType string
-
 const (
 	// Common parameter which can be specified in StorageClass to specify the desired FSType
 	// Provisioners SHOULD implement support for this if they are block device based
@@ -64,17 +60,6 @@ const (
 
 	ProbeAddOrUpdate ProbeOperation = 1 << iota
 	ProbeRemove
-	CSIVolumeStaged    CSIVolumePhaseType = "staged"
-	CSIVolumePublished CSIVolumePhaseType = "published"
-)
-
-var (
-	deprecatedVolumeProviders = map[string]string{
-		"kubernetes.io/cinder":    "The Cinder volume provider is deprecated and will be removed in a future release",
-		"kubernetes.io/storageos": "The StorageOS volume provider is deprecated and will be removed in a future release",
-		"kubernetes.io/quobyte":   "The Quobyte volume provider is deprecated and will be removed in a future release",
-		"kubernetes.io/flocker":   "The Flocker volume provider is deprecated and will be removed in a future release",
-	}
 )
 
 // VolumeOptions contains option information about a volume.
@@ -123,15 +108,12 @@ type NodeResizeOptions struct {
 
 	NewSize resource.Quantity
 	OldSize resource.Quantity
-
-	// CSIVolumePhase contains volume phase on the node
-	CSIVolumePhase CSIVolumePhaseType
 }
 
 type DynamicPluginProber interface {
 	Init() error
 
-	// If an error occurs, events are undefined.
+	// aggregates events for successful drivers and errors for failed drivers
 	Probe() (events []ProbeEvent, err error)
 }
 
@@ -182,7 +164,7 @@ type VolumePlugin interface {
 	// and volumePath. The spec may have incomplete information due to limited
 	// information from input. This function is used by volume manager to reconstruct
 	// volume spec by reading the volume directories from disk
-	ConstructVolumeSpec(volumeName, volumePath string) (*Spec, error)
+	ConstructVolumeSpec(volumeName, volumePath string) (ReconstructedVolume, error)
 
 	// SupportsMountOption returns true if volume plugins supports Mount options
 	// Specifying mount options in a volume plugin that doesn't support
@@ -193,6 +175,10 @@ type VolumePlugin interface {
 	// of enabling bulk polling of all nodes. This can speed up verification of
 	// attached volumes by quite a bit, but underlying pluging must support it.
 	SupportsBulkVolumeVerification() bool
+
+	// SupportsSELinuxContextMount returns true if volume plugins supports
+	// mount -o context=XYZ for a given volume.
+	SupportsSELinuxContextMount(spec *Spec) (bool, error)
 }
 
 // PersistentVolumePlugin is an extended interface of VolumePlugin and is used
@@ -225,7 +211,7 @@ type DeletableVolumePlugin interface {
 	// NewDeleter creates a new volume.Deleter which knows how to delete this
 	// resource in accordance with the underlying storage provider after the
 	// volume's release from a claim
-	NewDeleter(spec *Spec) (Deleter, error)
+	NewDeleter(logger klog.Logger, spec *Spec) (Deleter, error)
 }
 
 // ProvisionableVolumePlugin is an extended interface of VolumePlugin and is
@@ -235,7 +221,7 @@ type ProvisionableVolumePlugin interface {
 	// NewProvisioner creates a new volume.Provisioner which knows how to
 	// create PersistentVolumes in accordance with the plugin's underlying
 	// storage provider
-	NewProvisioner(options VolumeOptions) (Provisioner, error)
+	NewProvisioner(logger klog.Logger, options VolumeOptions) (Provisioner, error)
 }
 
 // AttachableVolumePlugin is an extended interface of VolumePlugin and is used for volumes that require attachment
@@ -346,6 +332,13 @@ type KubeletVolumeHost interface {
 	WaitForCacheSync() error
 	// Returns hostutil.HostUtils
 	GetHostUtil() hostutil.HostUtils
+
+	// Returns trust anchors from the named ClusterTrustBundle.
+	GetTrustAnchorsByName(name string, allowMissing bool) ([]byte, error)
+
+	// Returns trust anchors from the ClusterTrustBundles selected by signer
+	// name and label selector.
+	GetTrustAnchorsBySigner(signerName string, labelSelector *metav1.LabelSelector, allowMissing bool) ([]byte, error)
 }
 
 // AttachDetachVolumeHost is a AttachDetach Controller specific interface that plugins can use
@@ -445,14 +438,13 @@ type VolumeHost interface {
 	// Returns the name of the node
 	GetNodeName() types.NodeName
 
+	GetAttachedVolumesFromNodeStatus() (map[v1.UniqueVolumeName]string, error)
+
 	// Returns the event recorder of kubelet.
 	GetEventRecorder() record.EventRecorder
 
 	// Returns an interface that should be used to execute subpath operations
 	GetSubpather() subpath.Interface
-
-	// Returns options to pass for proxyutil filtered dialers.
-	GetFilteredDialOptions() *proxyutil.FilteredDialOptions
 }
 
 // VolumePluginMgr tracks registered plugins.
@@ -497,7 +489,6 @@ func (spec *Spec) IsKubeletExpandable() bool {
 		return spec.PersistentVolume.Spec.FlexVolume != nil
 	default:
 		return false
-
 	}
 }
 
@@ -569,6 +560,16 @@ type VolumeConfig struct {
 	// ProvisioningEnabled configures whether provisioning of this plugin is
 	// enabled or not. Currently used only in host_path plugin.
 	ProvisioningEnabled bool
+}
+
+// ReconstructedVolume contains information about a volume reconstructed by
+// ConstructVolumeSpec().
+type ReconstructedVolume struct {
+	// Spec is the volume spec of a mounted volume
+	Spec *Spec
+	// SELinuxMountContext is value of -o context=XYZ mount option.
+	// If empty, no such mount option is used.
+	SELinuxMountContext string
 }
 
 // NewSpecFromVolume creates an Spec from an v1.Volume
@@ -665,88 +666,69 @@ func (pm *VolumePluginMgr) FindPluginBySpec(spec *Spec) (VolumePlugin, error) {
 		return nil, fmt.Errorf("could not find plugin because volume spec is nil")
 	}
 
-	matches := []VolumePlugin{}
+	var match VolumePlugin
+	matchedPluginNames := []string{}
 	for _, v := range pm.plugins {
 		if v.CanSupport(spec) {
-			matches = append(matches, v)
+			match = v
+			matchedPluginNames = append(matchedPluginNames, v.GetPluginName())
 		}
 	}
 
 	pm.refreshProbedPlugins()
 	for _, plugin := range pm.probedPlugins {
 		if plugin.CanSupport(spec) {
-			matches = append(matches, plugin)
+			match = plugin
+			matchedPluginNames = append(matchedPluginNames, plugin.GetPluginName())
 		}
 	}
 
-	if len(matches) == 0 {
+	if len(matchedPluginNames) == 0 {
 		return nil, fmt.Errorf("no volume plugin matched")
 	}
-	if len(matches) > 1 {
-		matchedPluginNames := []string{}
-		for _, plugin := range matches {
-			matchedPluginNames = append(matchedPluginNames, plugin.GetPluginName())
-		}
+	if len(matchedPluginNames) > 1 {
 		return nil, fmt.Errorf("multiple volume plugins matched: %s", strings.Join(matchedPluginNames, ","))
 	}
 
-	// Issue warning if the matched provider is deprecated
-	pm.logDeprecation(matches[0].GetPluginName())
-	return matches[0], nil
+	return match, nil
 }
 
-// FindPluginByName fetches a plugin by name or by legacy name.  If no plugin
-// is found, returns error.
+// FindPluginByName fetches a plugin by name. If no plugin is found, returns error.
 func (pm *VolumePluginMgr) FindPluginByName(name string) (VolumePlugin, error) {
 	pm.mutex.RLock()
 	defer pm.mutex.RUnlock()
 
-	// Once we can get rid of legacy names we can reduce this to a map lookup.
-	matches := []VolumePlugin{}
+	var match VolumePlugin
 	if v, found := pm.plugins[name]; found {
-		matches = append(matches, v)
+		match = v
 	}
 
 	pm.refreshProbedPlugins()
 	if plugin, found := pm.probedPlugins[name]; found {
-		matches = append(matches, plugin)
+		if match != nil {
+			return nil, fmt.Errorf("multiple volume plugins matched: %s and %s", match.GetPluginName(), plugin.GetPluginName())
+		}
+		match = plugin
 	}
 
-	if len(matches) == 0 {
+	if match == nil {
 		return nil, fmt.Errorf("no volume plugin matched name: %s", name)
 	}
-	if len(matches) > 1 {
-		matchedPluginNames := []string{}
-		for _, plugin := range matches {
-			matchedPluginNames = append(matchedPluginNames, plugin.GetPluginName())
-		}
-		return nil, fmt.Errorf("multiple volume plugins matched: %s", strings.Join(matchedPluginNames, ","))
-	}
-
-	// Issue warning if the matched provider is deprecated
-	pm.logDeprecation(matches[0].GetPluginName())
-	return matches[0], nil
-}
-
-// logDeprecation logs warning when a deprecated plugin is used.
-func (pm *VolumePluginMgr) logDeprecation(plugin string) {
-	if detail, ok := deprecatedVolumeProviders[plugin]; ok && !pm.loggedDeprecationWarnings.Has(plugin) {
-		klog.Warningf("WARNING: %s built-in volume provider is now deprecated. %s", plugin, detail)
-		// Make sure the message is logged only once. It has Warning severity
-		// and we don't want to spam the log too much.
-		pm.loggedDeprecationWarnings.Insert(plugin)
-	}
+	return match, nil
 }
 
 // Check if probedPlugin cache update is required.
 // If it is, initialize all probed plugins and replace the cache with them.
 func (pm *VolumePluginMgr) refreshProbedPlugins() {
 	events, err := pm.prober.Probe()
+
 	if err != nil {
 		klog.ErrorS(err, "Error dynamically probing plugins")
-		return // Use cached plugins upon failure.
 	}
 
+	// because the probe function can return a list of valid plugins
+	// even when an error is present we still must add the plugins
+	// or they will be skipped because each event only fires once
 	for _, event := range events {
 		if event.Op == ProbeAddOrUpdate {
 			if err := pm.initProbedPlugin(event.Plugin); err != nil {
@@ -1048,11 +1030,11 @@ func (pm *VolumePluginMgr) Run(stopCh <-chan struct{}) {
 // plugin implementations.  The following attributes can be overridden per
 // plugin via configuration:
 //
-// 1.  pod.Spec.Volumes[0].VolumeSource must be overridden.  Recycler
+//  1. pod.Spec.Volumes[0].VolumeSource must be overridden.  Recycler
 //     implementations without a valid VolumeSource will fail.
-// 2.  pod.GenerateName helps distinguish recycler pods by name.  Recommended.
+//  2. pod.GenerateName helps distinguish recycler pods by name.  Recommended.
 //     Default is "pv-recycler-".
-// 3.  pod.Spec.ActiveDeadlineSeconds gives the recycler pod a maximum timeout
+//  3. pod.Spec.ActiveDeadlineSeconds gives the recycler pod a maximum timeout
 //     before failing.  Recommended.  Default is 60 seconds.
 //
 // See HostPath and NFS for working recycler examples
@@ -1078,9 +1060,9 @@ func NewPersistentVolumeRecyclerPodTemplate() *v1.Pod {
 			Containers: []v1.Container{
 				{
 					Name:    "pv-recycler",
-					Image:   "busybox:1.27",
+					Image:   "registry.k8s.io/build-image/debian-base:bookworm-v1.0.3",
 					Command: []string{"/bin/sh"},
-					Args:    []string{"-c", "test -e /scrub && rm -rf /scrub/..?* /scrub/.[!.]* /scrub/*  && test -z \"$(ls -A /scrub)\" || exit 1"},
+					Args:    []string{"-c", "test -e /scrub && find /scrub -mindepth 1 -delete && test -z \"$(ls -A /scrub)\" || exit 1"},
 					VolumeMounts: []v1.VolumeMount{
 						{
 							Name:      "vol",

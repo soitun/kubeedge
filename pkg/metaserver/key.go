@@ -56,8 +56,11 @@ func KeyFuncObj(obj runtime.Object) (string, error) {
 // KeyFuncReq generate key from req context
 func KeyFuncReq(ctx context.Context, _ string) (string, error) {
 	info, ok := apirequest.RequestInfoFrom(ctx)
-	if !ok || !info.IsResourceRequest {
+	if !ok {
 		return "", fmt.Errorf("no request info in context")
+	}
+	if !info.IsResourceRequest {
+		return info.Path, nil
 	}
 
 	group := ""
@@ -76,6 +79,11 @@ func KeyFuncReq(ctx context.Context, _ string) (string, error) {
 	resource := info.Resource
 	namespace := info.Namespace
 	name := info.Name
+
+	// if the request resource is namespaces, set the ns to null in the key
+	if resource == "namespaces" {
+		namespace = v2.NullNamespace
+	}
 	if namespace == "" {
 		namespace = v2.NullNamespace
 	}
@@ -98,11 +106,17 @@ func KeyRootFunc(ctx context.Context) string {
 // ParseKey parse key to group/version/resource, namespace, name
 // Now key format is like below:
 // 0/1   /2 /3   /4     /5
-//  /core/v1/pods/{namespaces}/{name}
+//
+//	/core/v1/pods/{namespaces}/{name}
+//
 // 0/1  /2/3
-//  /app/v1/deployments
+//
+//	/app/v1/deployments
+//
 // 0/1   /2 /3
-//  /core/v1/endpoints
+//
+//	/core/v1/endpoints
+//
 // Remember that ParseKey is not responsible for verifying the validity of the content,
 // for example, gvr in key /app/v1111/endpoint will be parsed as {Group:"app", Version:"v1111", Resource:"endpoint"}
 func ParseKey(key string) (gvr schema.GroupVersionResource, namespace string, name string) {
@@ -116,7 +130,7 @@ func ParseKey(key string) (gvr schema.GroupVersionResource, namespace string, na
 	slices := strings.Split(sl, "/")
 	length := len(slices)
 	if len(slices) == 0 || slices[0] != "" {
-		//klog.Errorf("[metaserver]falied to parse key: format error, %v",key)
+		// klog.Errorf("[metaserver]failed to parse key: format error, %v",key)
 		return
 	}
 	var (

@@ -27,7 +27,6 @@ import (
 
 	certificatesv1 "k8s.io/api/certificates/v1"
 	certificatesv1beta1 "k8s.io/api/certificates/v1beta1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/fields"
@@ -73,7 +72,7 @@ func RequestCertificate(client clientset.Interface, csrData []byte, name, signer
 	case err == nil:
 		return reqName, reqUID, err
 
-	case errors.IsAlreadyExists(err) && len(name) > 0:
+	case apierrors.IsAlreadyExists(err) && len(name) > 0:
 		klog.Infof("csr for this node already exists, reusing")
 		req, err := get(client, name)
 		if err != nil {
@@ -304,6 +303,53 @@ func WaitForCertificate(ctx context.Context, client clientset.Interface, reqName
 	return issuedCertificate, nil
 }
 
+func WaitForCertificateForEdge(ctx context.Context, client clientset.Interface, reqName string, reqUID types.UID) (certData []byte, err error) {
+	var issuedCertificate []byte
+
+	err = wait.Poll(5*time.Second, 15*time.Minute, func() (done bool, err error) {
+		csr, err := client.CertificatesV1().CertificateSigningRequests().Get(ctx, reqName, metav1.GetOptions{})
+		if err != nil {
+			return false, err
+		}
+
+		if csr.UID != reqUID {
+			return false, fmt.Errorf("csr %q changed UIDs", csr.Name)
+		}
+
+		approved := false
+		for _, c := range csr.Status.Conditions {
+			if c.Type == certificatesv1.CertificateDenied {
+				return false, fmt.Errorf("certificate signing request is denied, reason: %v, message: %v", c.Reason, c.Message)
+			}
+			if c.Type == certificatesv1.CertificateFailed {
+				return false, fmt.Errorf("certificate signing request failed, reason: %v, message: %v", c.Reason, c.Message)
+			}
+			if c.Type == certificatesv1.CertificateApproved {
+				approved = true
+			}
+		}
+		if approved {
+			if len(csr.Status.Certificate) > 0 {
+				klog.V(2).Infof("certificate signing request %s is issued", csr.Name)
+				issuedCertificate = csr.Status.Certificate
+				return true, nil
+			}
+			klog.V(2).Infof("certificate signing request %s is approved, waiting to be issued", csr.Name)
+		}
+
+		return false, nil
+	})
+
+	if err == wait.ErrWaitTimeout {
+		return nil, wait.ErrWaitTimeout
+	}
+	if err != nil {
+		return nil, formatError("cannot watch on the certificate signing request: %v", err)
+	}
+
+	return issuedCertificate, nil
+}
+
 // ensureCompatible ensures that a CSR object is compatible with an original CSR
 func ensureCompatible(new, orig *certificatesv1.CertificateSigningRequest, privateKey interface{}) error {
 	newCSR, err := parseCSR(new.Spec.Request)
@@ -346,8 +392,8 @@ func ensureCompatible(new, orig *certificatesv1.CertificateSigningRequest, priva
 // formatError preserves the type of an API message but alters the message. Expects
 // a single argument format string, and returns the wrapped error.
 func formatError(format string, err error) error {
-	if s, ok := err.(errors.APIStatus); ok {
-		se := &errors.StatusError{ErrStatus: s.Status()}
+	if s, ok := err.(apierrors.APIStatus); ok {
+		se := &apierrors.StatusError{ErrStatus: s.Status()}
 		se.ErrStatus.Message = fmt.Sprintf(format, se.ErrStatus.Message)
 		return se
 	}

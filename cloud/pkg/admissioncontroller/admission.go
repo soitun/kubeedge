@@ -20,14 +20,15 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/devices/v1beta1"
+	v1 "github.com/kubeedge/api/apis/rules/v1"
+	"github.com/kubeedge/api/client/clientset/versioned"
 	"github.com/kubeedge/kubeedge/cloud/cmd/admission/app/options"
-	"github.com/kubeedge/kubeedge/pkg/apis/devices/v1alpha2"
-	v1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
-	"github.com/kubeedge/kubeedge/pkg/client/clientset/versioned"
 )
 
 const (
-	ValidateDeviceModelConfigName   = "validate-devicemodel"
+	ValidateCRDWebhookConfigName    = "kubeedge-crds-validate-webhook-configuration"
+	ValidateDeviceWebhookName       = "validatedevice.kubeedge.io"
 	ValidateDeviceModelWebhookName  = "validatedevicemodel.kubeedge.io"
 	ValidateRuleWebhookName         = "validatedrule.kubeedge.io"
 	ValidateRuleEndpointWebhookName = "validatedruleendpoint.kubeedge.io"
@@ -36,13 +37,16 @@ const (
 	OfflineMigrationConfigName  = "mutate-offlinemigration"
 	OfflineMigrationWebhookName = "mutateofflinemigration.kubeedge.io"
 
+	MutatingAdmissionWebhookName   = "kubeedge-mutating-webhook"
+	MutatingNodeUpgradeWebhookName = "mutatingnodeupgradejob.kubeedge.io"
+
 	AutonomyLabel = "app-offline.kubeedge.io=autonomy"
 )
 
 var scheme = runtime.NewScheme()
 
-//codecs is for retrieving serializers for the supported wire formats
-//and conversion wrappers to define preferred internal and external versions.
+// codecs is for retrieving serializers for the supported wire formats
+// and conversion wrappers to define preferred internal and external versions.
 var codecs = serializer.NewCodecFactory(scheme)
 
 var controller = &AdmissionController{}
@@ -55,7 +59,7 @@ func addToScheme(scheme *runtime.Scheme) {
 	utilruntime.Must(corev1.AddToScheme(scheme))
 	utilruntime.Must(admissionv1.AddToScheme(scheme))
 	utilruntime.Must(admissionregistrationv1.AddToScheme(scheme))
-	utilruntime.Must(v1alpha2.AddDeviceCrds(scheme))
+	utilruntime.Must(v1beta1.AddDeviceCrds(scheme))
 }
 
 // AdmissionController implements the admission webhook for validation of configuration.
@@ -96,11 +100,13 @@ func Run(opt *options.AdmissionOptions) error {
 		return fmt.Errorf("failed to register the webhook with error: %v", err)
 	}
 
+	http.HandleFunc("/devices", serveDevice)
 	http.HandleFunc("/devicemodels", serveDeviceModel)
 	http.HandleFunc("/rules", serveRule)
 	http.HandleFunc("/ruleendpoints", serveRuleEndpoint)
 	http.HandleFunc("/offlinemigration", serveOfflineMigration)
 	http.HandleFunc("/nodeupgradejobs", serveNodeUpgradeJob)
+	http.HandleFunc("/mutating/nodeupgradejobs", serveMutatingNodeUpgradeJob)
 
 	tlsConfig, err := configTLS(opt, restConfig)
 	if err != nil {
@@ -154,13 +160,39 @@ func (ac *AdmissionController) registerWebhooks(opt *options.AdmissionOptions, c
 	// validating webhook configuration
 	validatingWebhookConfiguration := admissionregistrationv1.ValidatingWebhookConfiguration{
 		ObjectMeta: metav1.ObjectMeta{
-			// TODO: this config name is not precise, think a way to change it more common, like `validate-kubeedge-crd`
-			// but there'll be two ValidatingWebhookConfigurations, to keep compatible, we can only keep one webhook for one CRD
-			Name: ValidateDeviceModelConfigName,
+			// there'll be two ValidatingWebhookConfigurations, to keep compatible, we can only keep one webhook for one CRD
+			Name: ValidateCRDWebhookConfigName,
 		},
 		Webhooks: []admissionregistrationv1.ValidatingWebhook{
-			// Device Model Validating Webhook
+			// Device Validating Webhook
 			{
+				Name: ValidateDeviceWebhookName,
+				Rules: []admissionregistrationv1.RuleWithOperations{{
+					Operations: []admissionregistrationv1.OperationType{
+						admissionregistrationv1.Create,
+						admissionregistrationv1.Update,
+					},
+					Rule: admissionregistrationv1.Rule{
+						APIGroups:   []string{"devices.kubeedge.io"},
+						APIVersions: []string{"v1beta1"},
+						Resources:   []string{"devices"},
+					},
+				}},
+				ClientConfig: admissionregistrationv1.WebhookClientConfig{
+					Service: &admissionregistrationv1.ServiceReference{
+						Namespace: opt.AdmissionServiceNamespace,
+						Name:      opt.AdmissionServiceName,
+						Path:      strPtr("/devices"),
+						Port:      &opt.Port,
+					},
+					CABundle: cabundle,
+				},
+				FailurePolicy:           &ignorePolicy,
+				SideEffects:             &noneSideEffect,
+				AdmissionReviewVersions: []string{"v1"},
+			},
+			{ // Device Model Validating Webhook
+
 				Name: ValidateDeviceModelWebhookName,
 				Rules: []admissionregistrationv1.RuleWithOperations{{
 					Operations: []admissionregistrationv1.OperationType{
@@ -169,7 +201,7 @@ func (ac *AdmissionController) registerWebhooks(opt *options.AdmissionOptions, c
 					},
 					Rule: admissionregistrationv1.Rule{
 						APIGroups:   []string{"devices.kubeedge.io"},
-						APIVersions: []string{"v1alpha2"},
+						APIVersions: []string{"v1beta1"},
 						Resources:   []string{"devicemodels"},
 					},
 				}},
@@ -317,8 +349,46 @@ func (ac *AdmissionController) registerWebhooks(opt *options.AdmissionOptions, c
 		},
 	}
 
+	// NodeUpgradeJob mutating webhook
+	nodeUpgradeJobWebhook := admissionregistrationv1.MutatingWebhook{
+		Name: MutatingNodeUpgradeWebhookName,
+		Rules: []admissionregistrationv1.RuleWithOperations{{
+			Operations: []admissionregistrationv1.OperationType{
+				admissionregistrationv1.Create,
+				admissionregistrationv1.Update,
+			},
+
+			Rule: admissionregistrationv1.Rule{
+				APIGroups:   []string{"operations.kubeedge.io"},
+				APIVersions: []string{"v1alpha1"},
+				Resources:   []string{"nodeupgradejobs"},
+			},
+		}},
+		ClientConfig: admissionregistrationv1.WebhookClientConfig{
+			Service: &admissionregistrationv1.ServiceReference{
+				Namespace: opt.AdmissionServiceNamespace,
+				Name:      opt.AdmissionServiceName,
+				Path:      strPtr("/mutating/nodeupgradejobs"),
+				Port:      &opt.Port,
+			},
+			CABundle: cabundle,
+		},
+		FailurePolicy:           &ignorePolicy,
+		SideEffects:             &noneSideEffect,
+		AdmissionReviewVersions: []string{"v1"},
+	}
+	// mutatingWebhook contains all the kubeedge related Mutating webhook
+	mutatingWebhook := admissionregistrationv1.MutatingWebhookConfiguration{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: MutatingAdmissionWebhookName,
+		},
+		Webhooks: []admissionregistrationv1.MutatingWebhook{
+			nodeUpgradeJobWebhook,
+		},
+	}
+
 	return registerMutatingWebhook(ac.Client.AdmissionregistrationV1().MutatingWebhookConfigurations(),
-		[]admissionregistrationv1.MutatingWebhookConfiguration{offlineMigrationWebhook})
+		[]admissionregistrationv1.MutatingWebhookConfiguration{offlineMigrationWebhook, mutatingWebhook})
 }
 
 func (ac *AdmissionController) getRuleEndpoint(namespace, name string) (*v1.RuleEndpoint, error) {

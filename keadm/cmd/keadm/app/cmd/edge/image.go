@@ -27,10 +27,10 @@ import (
 )
 
 func request(opt *common.JoinOptions, step *common.Step) error {
-	imageSet := image.EdgeSet(opt.ImageRepository, opt.KubeEdgeVersion)
+	imageSet := image.EdgeSet(opt)
 	images := imageSet.List()
 
-	runtime, err := util.NewContainerRuntime(opt.RuntimeType, opt.RemoteRuntimeEndpoint)
+	runtime, err := util.NewContainerRuntime(opt.RemoteRuntimeEndpoint, opt.CGroupDriver)
 	if err != nil {
 		return err
 	}
@@ -52,9 +52,6 @@ func request(opt *common.JoinOptions, step *common.Step) error {
 		step.Printf("Start the default mqtt service")
 		if err := createMQTTConfigFile(); err != nil {
 			return fmt.Errorf("create MQTT config file failed: %v", err)
-		}
-		if err := runtime.RunMQTT(imageSet.Get(image.EdgeMQTT)); err != nil {
-			return fmt.Errorf("run MQTT failed: %v", err)
 		}
 	}
 	return nil

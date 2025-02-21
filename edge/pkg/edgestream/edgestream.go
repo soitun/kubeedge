@@ -18,6 +18,7 @@ package edgestream
 
 import (
 	"crypto/tls"
+	"fmt"
 	"net/http"
 	"net/url"
 	"time"
@@ -25,13 +26,14 @@ import (
 	"github.com/gorilla/websocket"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgestream/config"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/kubeedge/pkg/stream"
+	"github.com/kubeedge/kubeedge/pkg/util"
 )
 
 type edgestream struct {
@@ -107,13 +109,27 @@ func (e *edgestream) Start() {
 func (e *edgestream) TLSClientConnect(url url.URL, tlsConfig *tls.Config) error {
 	klog.Info("Start a new tunnel stream connection ...")
 
+	// If the node IP address is not specified in the configuration file,
+	// the node IP address is reacquired each time the tunnel stream is reconnected
+	var nodeIP string
+	if e.nodeIP == "" {
+		ip, err := util.GetLocalIP(util.GetHostname())
+		if err != nil {
+			return fmt.Errorf("failed to get Local IP address: %v", err)
+		}
+		klog.Infof("get node local IP address successfully: %s", ip)
+		nodeIP = ip
+	} else {
+		nodeIP = e.nodeIP
+	}
+
 	dial := websocket.Dialer{
 		TLSClientConfig:  tlsConfig,
 		HandshakeTimeout: time.Duration(config.Config.HandshakeTimeout) * time.Second,
 	}
 	header := http.Header{}
 	header.Add(stream.SessionKeyHostNameOverride, e.hostnameOverride)
-	header.Add(stream.SessionKeyInternalIP, e.nodeIP)
+	header.Add(stream.SessionKeyInternalIP, nodeIP)
 
 	con, _, err := dial.Dial(url.String(), header)
 	if err != nil {

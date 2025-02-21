@@ -17,16 +17,15 @@ limitations under the License.
 package cloudstream
 
 import (
+	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudstream/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 type cloudStream struct {
-	enable bool
-
+	enable     bool
 	tunnelPort int
 }
 
@@ -34,8 +33,7 @@ var _ core.Module = (*cloudStream)(nil)
 
 func newCloudStream(enable bool, tunnelPort int) *cloudStream {
 	return &cloudStream{
-		enable: enable,
-
+		enable:     enable,
 		tunnelPort: tunnelPort,
 	}
 }

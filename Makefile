@@ -14,7 +14,8 @@ BINARIES=cloudcore \
 	csidriver \
 	iptablesmanager \
 	edgemark \
-	controllermanager
+	controllermanager \
+	conformance
 
 COMPONENTS=cloud \
 	edge
@@ -80,7 +81,6 @@ endif
 .PHONY: verify-golang
 verify-golang:
 	hack/verify-golang.sh
-
 .PHONY: verify-vendor
 verify-vendor:
 	hack/verify-vendor.sh
@@ -93,6 +93,7 @@ verify-vendor-licenses:
 .PHONY: verify-crds
 verify-crds:
 	hack/verify-crds.sh
+
 
 define TEST_HELP_INFO
 # run golang test case.
@@ -158,6 +159,7 @@ else
 integrationtest:
 	hack/make-rules/build.sh edgecore
 	edge/test/integration/scripts/execute.sh
+	cloud/test/integration/scripts/execute.sh
 endif
 
 GOARM_VALUES=GOARM7 \
@@ -180,6 +182,7 @@ define CROSSBUILD_HELP_INFO
 #   make crossbuild WHAT=edgecore
 #   make crossbuild WHAT=edgecore BUILD_WITH_CONTAINER=false
 #   make crossbuild WHAT=edgecore ARM_VERSION=GOARM7
+#   make crossbuild OS=GOOSwindows BUILD_WITH_CONTAINER=false
 #
 endef
 .PHONY: crossbuild
@@ -188,10 +191,10 @@ crossbuild:
 	@echo "$$CROSSBUILD_HELP_INFO"
 else ifeq ($(BUILD_WITH_CONTAINER),true)
 crossbuild:
-	$(RUN) hack/make-rules/crossbuild.sh $(WHAT) $(ARM_VERSION)
+	$(RUN) hack/make-rules/crossbuild.sh $(WHAT) $(ARM_VERSION) $(OS)
 else
 crossbuild:
-	hack/make-rules/crossbuild.sh $(WHAT) $(ARM_VERSION)
+	hack/make-rules/crossbuild.sh $(WHAT) $(ARM_VERSION) $(OS)
 endif
 
 CRD_VERSIONS=v1
@@ -290,7 +293,7 @@ else
 e2e:
 #	bash tests/e2e/scripts/execute.sh device_crd
 #	This has been commented temporarily since there is an issue of CI using same master for all PRs, which is causing failures when run parallelly
-	tests/e2e/scripts/execute.sh
+	tests/scripts/execute.sh ${KIND_IMAGE}
 endif
 
 define KEADM_DEPRECATED_E2E_HELP_INFO
@@ -304,11 +307,11 @@ endef
 .PHONY: keadm_deprecated_e2e
 ifeq ($(HELP),y)
 keadm_deprecated_e2e:
-	@echo "KEADM_DEPRECATED_E2E_HELP_INFO"
+	@echo "$$KEADM_DEPRECATED_E2E_HELP_INFO"
 else
 keadm_deprecated_e2e:
 	$(RUN) hack/make-rules/release.sh kubeedge
-	tests/e2e/scripts/keadm_deprecated_e2e.sh
+	tests/scripts/keadm_deprecated_e2e.sh
 endif
 
 define KEADM_E2E_HELP_INFO
@@ -322,10 +325,10 @@ endef
 .PHONY: keadm_e2e
 ifeq ($(HELP),y)
 keadm_e2e:
-	@echo "KEADM_E2E_HELP_INFO"
+	@echo "$$KEADM_E2E_HELP_INFO"
 else
 keadm_e2e:
-	tests/e2e/scripts/keadm_e2e.sh
+	tests/scripts/keadm_e2e.sh
 endif
 
 define CLEAN_HELP_INFO
@@ -360,7 +363,7 @@ endef
 .PHONY: image
 ifeq ($(HELP),y)
 image:
-	@echo "IMAGE_HELP_INFO"
+	@echo "$$IMAGE_HELP_INFO"
 else
 image:
 	hack/make-rules/image.sh $(WHAT)
@@ -381,7 +384,7 @@ endef
 .PHONY: crossbuildimage
 ifeq ($(HELP),y)
 crossbuildimage:
-	@echo "CROSS_IMAGE_HELP_INFO"
+	@echo "$$CROSS_IMAGE_HELP_INFO"
 else
 crossbuildimage:
 	hack/make-rules/crossbuildimage.sh $(WHAT)
@@ -432,13 +435,52 @@ define RELEASE_HELP_INFO
 #
 endef
 .PHONY: release
+
 ifeq ($(HELP),y)
 release:
 	@echo "$$RELEASE_HELP_INFO"
 else ifeq ($(BUILD_WITH_CONTAINER),true)
 release:
-	$(RUN) hack/make-rules/release.sh $(WHAT) $(ARM_VERSION)
+	$(RUN) hack/make-rules/release.sh $(WHAT) $(ARM_VERSION) $(OS)
+else ifeq ($(OS),windows)
+release:
+	sudo apt-get install -y mingw-w64
+	hack/make-rules/release.sh $(WHAT) $(ARM_VERSION) $(OS)
 else
 release:
-	hack/make-rules/release.sh $(WHAT) $(ARM_VERSION)
+	hack/make-rules/release.sh $(WHAT) $(ARM_VERSION) $(OS)
+endif
+
+define KEADM_COMPATIBILITY_E2E_HELP_INFO
+# keadm compatibility e2e test
+#
+# Example:
+#   make keadm_compatibility_e2e
+#   make keadm_compatibility_e2e HELP=y
+#
+endef
+.PHONY: keadm_compatibility_e2e
+ifeq ($(HELP),y)
+keadm_compatibility_e2e:
+	@echo "$$KEADM_COMPATIBILITY_E2E_HELP_INFO"
+else
+keadm_compatibility_e2e:
+	tests/scripts/keadm_compatibility_e2e.sh ${CLOUD_EDGE_VERSION}
+endif
+
+define CONFORMANCE_E2E_HELP_INFO
+# conformance_e2e test.
+#
+# Example:
+#   make conformance_e2e
+#   make conformance_e2e HELP=y
+#
+endef
+.PHONY: conformance_e2e
+ifeq ($(HELP),y)
+conformance_e2e:
+	@echo "$$CONFORMANCE_E2E_HELP_INFO"
+else
+conformance_e2e:
+	tests/scripts/conformance_e2e.sh ${KIND_IMAGE} ${CONFORMANCE_TYPE}
 endif

@@ -8,10 +8,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/kubeedge/kubeedge/common/constants"
+	"github.com/kubeedge/api/apis/common/constants"
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
 	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/util"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 var (
@@ -46,14 +46,12 @@ func NewCollect() *cobra.Command {
 	return cmd
 }
 
-// dd flags
+// add flags
 func addCollectOtherFlags(cmd *cobra.Command, collectOptions *common.CollectOptions) {
 	cmd.Flags().StringVarP(&collectOptions.Config, common.EdgecoreConfig, "c", collectOptions.Config,
 		fmt.Sprintf("Specify configuration file, default is %s", common.EdgecoreConfigPath))
 	cmd.Flags().BoolVarP(&collectOptions.Detail, "detail", "d", false,
 		"Whether to print internal log output")
-	//cmd.Flags().StringVar(&collectOptions.OutputPath, "output-path", collectOptions.OutputPath,
-	//	"Cache data and store data compression packages in a directory that default to the current directory")
 	cmd.Flags().StringVarP(&collectOptions.OutputPath, "output-path", "o", collectOptions.OutputPath,
 		"Cache data and store data compression packages in a directory that default to the current directory")
 	cmd.Flags().StringVarP(&collectOptions.LogPath, "log-path", "l", util.KubeEdgeLogPath,
@@ -103,19 +101,7 @@ func ExecuteCollect(collectOptions *common.CollectOptions) error {
 	}
 	printDetail("collect edgecore data finish")
 
-	if edgeconfig.Modules.Edged.ContainerRuntime == "docker" ||
-		edgeconfig.Modules.Edged.ContainerRuntime == "" {
-		err = collectRuntimeData(fmt.Sprintf("%s/runtime", tmpName))
-		if err != nil {
-			fmt.Printf("collect runtime data failed")
-			return err
-		}
-		printDetail("collect runtime data finish")
-	} else {
-		fmt.Printf("now runtime only support: docker")
-		// TODO
-		// other runtime
-	}
+	// TODO: collectRuntimeData with containerd
 
 	OutputPath := collectOptions.OutputPath
 	zipName := fmt.Sprintf("%s/edge_%s.tar.gz", OutputPath, timenow)

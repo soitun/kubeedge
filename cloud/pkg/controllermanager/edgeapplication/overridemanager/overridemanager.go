@@ -5,27 +5,29 @@ import (
 	"fmt"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	v1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	errorutil "k8s.io/apimachinery/pkg/util/errors"
 
-	appsv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/apps/v1alpha1"
+	appsv1alpha1 "github.com/kubeedge/api/apis/apps/v1alpha1"
 )
 
-// overrideOption define the JSONPatch operator
+// overrideOption defines the JSONPatch operator
 type overrideOption struct {
 	Op    string      `json:"op"`
 	Path  string      `json:"path"`
 	Value interface{} `json:"value,omitempty"`
 }
 
-// OverrideManager manages override operation
+// Overrider manages override operation
 type Overrider interface {
 	ApplyOverrides(rawObjs *unstructured.Unstructured, overrideInfo OverriderInfo) error
 }
 
 type OverriderInfo struct {
-	TargetNodeGroup string
-	Overriders      *appsv1alpha1.Overriders
+	TargetNodeGroup         string
+	TargetNodeLabelSelector v1.LabelSelector
+	Overriders              *appsv1alpha1.Overriders
 }
 
 type OverrideManager struct {

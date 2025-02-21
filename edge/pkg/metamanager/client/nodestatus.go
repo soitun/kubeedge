@@ -9,12 +9,12 @@ import (
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 )
 
-//NodeStatusGetter is interface to get node status
+// NodeStatusGetter is interface to get node status
 type NodeStatusGetter interface {
 	NodeStatus(namespace string) NodeStatusInterface
 }
 
-//NodeStatusInterface is node status interface
+// NodeStatusInterface is node status interface
 type NodeStatusInterface interface {
 	Create(*edgeapi.NodeStatusRequest) (*edgeapi.NodeStatusRequest, error)
 	Update(rsName string, ns edgeapi.NodeStatusRequest) error
@@ -34,10 +34,11 @@ func newNodeStatus(namespace string, s SendInterface) *nodeStatus {
 	}
 }
 
-func (c *nodeStatus) Create(ns *edgeapi.NodeStatusRequest) (*edgeapi.NodeStatusRequest, error) {
+func (c *nodeStatus) Create(*edgeapi.NodeStatusRequest) (*edgeapi.NodeStatusRequest, error) {
 	return nil, nil
 }
 
+// deprecated
 func (c *nodeStatus) Update(rsName string, ns edgeapi.NodeStatusRequest) error {
 	resource := fmt.Sprintf("%s/%s/%s", c.namespace, model.ResourceTypeNodeStatus, rsName)
 	nodeStatusMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.UpdateOperation, ns)
@@ -49,10 +50,10 @@ func (c *nodeStatus) Update(rsName string, ns edgeapi.NodeStatusRequest) error {
 	return nil
 }
 
-func (c *nodeStatus) Delete(name string) error {
+func (c *nodeStatus) Delete(string) error {
 	return nil
 }
 
-func (c *nodeStatus) Get(name string) (*edgeapi.NodeStatusRequest, error) {
+func (c *nodeStatus) Get(string) (*edgeapi.NodeStatusRequest, error) {
 	return nil, nil
 }

@@ -1,9 +1,7 @@
 # KubeEdge
-[![Build Status](https://travis-ci.org/kubeedge/kubeedge.svg?branch=master)](https://travis-ci.org/kubeedge/kubeedge)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubeedge/kubeedge)](https://goreportcard.com/report/github.com/kubeedge/kubeedge)
 [![LICENSE](https://img.shields.io/github/license/kubeedge/kubeedge.svg?style=flat-square)](/LICENSE)
 [![Releases](https://img.shields.io/github/release/kubeedge/kubeedge/all.svg?style=flat-square)](https://github.com/kubeedge/kubeedge/releases)
-[![Documentation Status](https://readthedocs.org/projects/kubeedge/badge/?version=latest)](https://kubeedge.readthedocs.io/en/latest/?badge=latest)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3018/badge)](https://bestpractices.coreinfrastructure.org/projects/3018)
 
 <img src="./docs/images/kubeedge-logo-only.png">
@@ -18,11 +16,7 @@ With KubeEdge it is easy to get and deploy existing complicated machine learning
 With business logic running at the Edge, much larger volumes of data can be secured & processed locally where the data is produced.
 With data processed at the Edge, the responsiveness is increased dramatically and data privacy is protected.
 
-KubeEdge is an incubation-level hosted project by the [Cloud Native Computing Foundation](https://cncf.io) (CNCF). KubeEdge incubation [announcement](https://www.cncf.io/blog/2020/09/16/toc-approves-kubeedge-as-incubating-project/) by CNCF.
-
-**Note**:
-
-The versions before *1.8* have not been supported, please try upgrade.
+KubeEdge is a graduation-level hosted project by the [Cloud Native Computing Foundation](https://cncf.io) (CNCF). KubeEdge graduation [announcement](https://www.cncf.io/announcements/2024/10/15/cloud-native-computing-foundation-announces-kubeedge-graduation/) by CNCF.
 
 ## Advantages
 
@@ -53,18 +47,20 @@ KubeEdge consists of cloud part and edge part.
 - [EdgeHub](https://kubeedge.io/en/docs/architecture/edge/edgehub): a web socket client responsible for interacting with Cloud Service for the edge computing (like Edge Controller as in the KubeEdge Architecture). This includes syncing cloud-side resource updates to the edge, and reporting edge-side host and device status changes to the cloud.
 - [Edged](https://kubeedge.io/en/docs/architecture/edge/edged): an agent that runs on edge nodes and manages containerized applications.
 - [EventBus](https://kubeedge.io/en/docs/architecture/edge/eventbus): a MQTT client to interact with MQTT servers (mosquitto), offering publish and subscribe capabilities to other components.
-- [ServiceBus](https://kubeedge.io/en/docs/architecture/edge/servicebus): a HTTP client to interact with HTTP servers (REST), offering HTTP client capabilities to components of cloud to reach HTTP servers running at edge.
+- [ServiceBus](https://kubeedge.io/en/docs/architecture/edge/servicebus): an HTTP client to interact with HTTP servers (REST), offering HTTP client capabilities to components of cloud to reach HTTP servers running at edge.
 - [DeviceTwin](https://kubeedge.io/en/docs/architecture/edge/devicetwin): responsible for storing device status and syncing device status to the cloud. It also provides query interfaces for applications.
 - [MetaManager](https://kubeedge.io/en/docs/architecture/edge/metamanager): the message processor between edged and edgehub. It is also responsible for storing/retrieving metadata to/from a lightweight database (SQLite).
 
 ## Kubernetes compatibility
 
-|                        | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 |
-|------------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
-| KubeEdge 1.10          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| KubeEdge 1.11          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| KubeEdge 1.12          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| KubeEdge HEAD (master) | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+|                        | Kubernetes 1.25 | Kubernetes 1.26 | Kubernetes 1.27 | Kubernetes 1.28 | Kubernetes 1.29 | Kubernetes 1.30 | 
+|------------------------| --------------- |-----------------|-----------------| --------------- | --------------- |-----------------|
+| KubeEdge 1.16          | ✓               | ✓               | ✓               | -               | -               | -               |
+| KubeEdge 1.17          | +               | ✓               | ✓               | ✓               | -               | -               |
+| KubeEdge 1.18          | +               | +               | ✓               | ✓               | ✓               | -               |
+| KubeEdge 1.19          | +               | +               | ✓               | ✓               | ✓               | -               |
+| KubeEdge 1.20          | +               | +               | +               | ✓               | ✓               | ✓               |
+| KubeEdge HEAD (master) | +               | +               | +               | ✓               | ✓               | ✓               |
 
 Key:
 * `✓` KubeEdge and the Kubernetes version are exactly compatible.
@@ -81,15 +77,17 @@ To learn deeply about KubeEdge, try some examples on [examples](https://github.c
 
 ## Roadmap
 
-* [2021 Roadmap](./docs/roadmap.md#roadmap)
+* [2024 Roadmap](https://github.com/kubeedge/community/blob/master/roadmap.md)
 
 ## Meeting
 
-Regular Community Meeting:
-- Europe Time: **Wednesdays at 16:30-17:30 Beijing Time** (biweekly, starting from Feb. 19th 2020).
-([Convert to your timezone.](https://www.thetimezoneconverter.com/?t=16%3A30&tz=GMT%2B8&))
+Technical Steering Committees (TSC) Meeting:
 - Pacific Time: **Wednesdays at 10:00-11:00 Beijing Time** (biweekly, starting from Feb. 26th 2020).
 ([Convert to your timezone.](https://www.thetimezoneconverter.com/?t=10%3A00&tz=GMT%2B8&))
+
+Regular Community Meeting:
+- Europe Time: **Wednesdays at 16:00-17:30 Beijing Time** (weekly, starting from Feb. 19th 2020).
+([Convert to your timezone.](https://www.thetimezoneconverter.com/?t=16%3A30&tz=GMT%2B8&))
 
 Resources:
 - [Meeting notes and agenda](https://docs.google.com/document/d/1Sr5QS_Z04uPfRbA7PrXr3aPwCRpx7EtsyHq7mp6CnHs/edit)
@@ -104,7 +102,7 @@ If you need support, start with the [troubleshooting guide](https://kubeedge.io/
 If you have questions, feel free to reach out to us in the following ways:
 
 - [mailing list](https://groups.google.com/forum/#!forum/kubeedge)
-- [slack](https://join.slack.com/t/kubeedge/shared_invite/enQtNjc0MTg2NTg2MTk0LWJmOTBmOGRkZWNhMTVkNGU1ZjkwNDY4MTY4YTAwNDAyMjRkMjdlMjIzYmMxODY1NGZjYzc4MWM5YmIxZjU1ZDI)
+- [slack](https://kubeedge.io/docs/community/slack)
 - [twitter](https://twitter.com/kubeedge)
 
 ## Contributing
@@ -127,7 +125,7 @@ A third party security audit of KubeEdge has been completed in July 2022. Additi
 
 We encourage security researchers, industry organizations and users to proactively report suspected vulnerabilities to our security team (`cncf-kubeedge-security@lists.cncf.io`), the team will help diagnose the severity of the issue and determine how to address the issue as soon as possible.
 
-For further details please see [Security Policy](https://github.com/kubeedge/community/blob/master/security-team/SECURITY.md) for our security process and how to report vulnerabilities.
+For further details please see [Security Policy](https://github.com/kubeedge/community/blob/master/team-security/SECURITY.md) for our security process and how to report vulnerabilities.
 
 ## License
 

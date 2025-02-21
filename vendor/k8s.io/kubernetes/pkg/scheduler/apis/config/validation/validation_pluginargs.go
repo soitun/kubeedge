@@ -31,6 +31,13 @@ import (
 	"k8s.io/kubernetes/pkg/scheduler/apis/config"
 )
 
+// supportedScoringStrategyTypes has to be a set of strings for use with field.Unsupported
+var supportedScoringStrategyTypes = sets.New(
+	string(config.LeastAllocated),
+	string(config.MostAllocated),
+	string(config.RequestedToCapacityRatio),
+)
+
 // ValidateDefaultPreemptionArgs validates that DefaultPreemptionArgs are correct.
 func ValidateDefaultPreemptionArgs(path *field.Path, args *config.DefaultPreemptionArgs) error {
 	var allErrs field.ErrorList
@@ -85,35 +92,6 @@ func validateHardPodAffinityWeight(path *field.Path, w int32) error {
 		return field.Invalid(path, w, msg)
 	}
 	return nil
-}
-
-// ValidateNodeLabelArgs validates that NodeLabelArgs are correct.
-func ValidateNodeLabelArgs(path *field.Path, args *config.NodeLabelArgs) error {
-	var allErrs field.ErrorList
-
-	allErrs = append(allErrs, validateNoConflict(args.PresentLabels, args.AbsentLabels,
-		path.Child("presentLabels"), path.Child("absentLabels"))...)
-	allErrs = append(allErrs, validateNoConflict(args.PresentLabelsPreference, args.AbsentLabelsPreference,
-		path.Child("presentLabelsPreference"), path.Child("absentLabelsPreference"))...)
-
-	return allErrs.ToAggregate()
-}
-
-// validateNoConflict validates that presentLabels and absentLabels do not conflict.
-func validateNoConflict(presentLabels, absentLabels []string, presentPath, absentPath *field.Path) field.ErrorList {
-	var allErrs field.ErrorList
-
-	m := make(map[string]int, len(presentLabels)) // label -> index
-	for i, l := range presentLabels {
-		m[l] = i
-	}
-	for i, l := range absentLabels {
-		if j, ok := m[l]; ok {
-			allErrs = append(allErrs, field.Invalid(presentPath.Index(j), l,
-				fmt.Sprintf("conflict with %v", absentPath.Index(i).String())))
-		}
-	}
-	return allErrs
 }
 
 // ValidatePodTopologySpreadArgs validates that PodTopologySpreadArgs are correct.
@@ -171,13 +149,13 @@ func validateTopologyKey(p *field.Path, v string) field.ErrorList {
 }
 
 func validateWhenUnsatisfiable(p *field.Path, v v1.UnsatisfiableConstraintAction) *field.Error {
-	supportedScheduleActions := sets.NewString(string(v1.DoNotSchedule), string(v1.ScheduleAnyway))
+	supportedScheduleActions := sets.New(string(v1.DoNotSchedule), string(v1.ScheduleAnyway))
 
 	if len(v) == 0 {
 		return field.Required(p, "can not be empty")
 	}
 	if !supportedScheduleActions.Has(string(v)) {
-		return field.NotSupported(p, v, supportedScheduleActions.List())
+		return field.NotSupported(p, v, sets.List(supportedScheduleActions))
 	}
 	return nil
 }
@@ -191,14 +169,6 @@ func validateConstraintNotRepeat(path *field.Path, constraints []v1.TopologySpre
 		}
 	}
 	return nil
-}
-
-// ValidateRequestedToCapacityRatioArgs validates that RequestedToCapacityRatioArgs are correct.
-func ValidateRequestedToCapacityRatioArgs(path *field.Path, args *config.RequestedToCapacityRatioArgs) error {
-	var allErrs field.ErrorList
-	allErrs = append(allErrs, validateFunctionShape(args.Shape, path.Child("shape"))...)
-	allErrs = append(allErrs, validateResourcesNoMax(args.Resources, path.Child("resources"))...)
-	return allErrs.ToAggregate()
 }
 
 func validateFunctionShape(shape []config.UtilizationShapePoint, path *field.Path) field.ErrorList {
@@ -238,28 +208,6 @@ func validateFunctionShape(shape []config.UtilizationShapePoint, path *field.Pat
 	return allErrs
 }
 
-// weight of resource is allowed to exceed 100, this is only applicable to `RequestedToCapacityRatio` plugin for backwards compatibility reason.
-func validateResourcesNoMax(resources []config.ResourceSpec, p *field.Path) field.ErrorList {
-	var allErrs field.ErrorList
-	for i, r := range resources {
-		if r.Weight < 1 {
-			allErrs = append(allErrs, field.Invalid(p.Index(i).Child("weight"), r.Weight,
-				fmt.Sprintf("resource weight of %s not in valid range [1, inf)", r.Name)))
-		}
-	}
-	return allErrs
-}
-
-// ValidateNodeResourcesLeastAllocatedArgs validates that NodeResourcesLeastAllocatedArgs are correct.
-func ValidateNodeResourcesLeastAllocatedArgs(path *field.Path, args *config.NodeResourcesLeastAllocatedArgs) error {
-	return validateResources(args.Resources, path.Child("resources")).ToAggregate()
-}
-
-// ValidateNodeResourcesMostAllocatedArgs validates that NodeResourcesMostAllocatedArgs are correct.
-func ValidateNodeResourcesMostAllocatedArgs(path *field.Path, args *config.NodeResourcesMostAllocatedArgs) error {
-	return validateResources(args.Resources, path.Child("resources")).ToAggregate()
-}
-
 func validateResources(resources []config.ResourceSpec, p *field.Path) field.ErrorList {
 	var allErrs field.ErrorList
 	for i, resource := range resources {
@@ -274,7 +222,7 @@ func validateResources(resources []config.ResourceSpec, p *field.Path) field.Err
 // ValidateNodeResourcesBalancedAllocationArgs validates that NodeResourcesBalancedAllocationArgs are set correctly.
 func ValidateNodeResourcesBalancedAllocationArgs(path *field.Path, args *config.NodeResourcesBalancedAllocationArgs) error {
 	var allErrs field.ErrorList
-	seenResources := sets.NewString()
+	seenResources := sets.New[string]()
 	for i, resource := range args.Resources {
 		if seenResources.Has(resource.Name) {
 			allErrs = append(allErrs, field.Duplicate(path.Child("resources").Index(i).Child("name"), resource.Name))
@@ -311,15 +259,27 @@ func ValidateNodeAffinityArgs(path *field.Path, args *config.NodeAffinityArgs) e
 	return errors.Flatten(errors.NewAggregate(errs))
 }
 
+// VolumeBindingArgsValidationOptions contains the different settings for validation.
+type VolumeBindingArgsValidationOptions struct {
+	AllowVolumeCapacityPriority bool
+}
+
 // ValidateVolumeBindingArgs validates that VolumeBindingArgs are set correctly.
 func ValidateVolumeBindingArgs(path *field.Path, args *config.VolumeBindingArgs) error {
+	return ValidateVolumeBindingArgsWithOptions(path, args, VolumeBindingArgsValidationOptions{
+		AllowVolumeCapacityPriority: utilfeature.DefaultFeatureGate.Enabled(features.VolumeCapacityPriority),
+	})
+}
+
+// ValidateVolumeBindingArgsWithOptions validates that VolumeBindingArgs and VolumeBindingArgsValidationOptions with scheduler features.
+func ValidateVolumeBindingArgsWithOptions(path *field.Path, args *config.VolumeBindingArgs, opts VolumeBindingArgsValidationOptions) error {
 	var allErrs field.ErrorList
 
 	if args.BindTimeoutSeconds < 0 {
 		allErrs = append(allErrs, field.Invalid(path.Child("bindTimeoutSeconds"), args.BindTimeoutSeconds, "invalid BindTimeoutSeconds, should not be a negative value"))
 	}
 
-	if utilfeature.DefaultFeatureGate.Enabled(features.VolumeCapacityPriority) {
+	if opts.AllowVolumeCapacityPriority {
 		allErrs = append(allErrs, validateFunctionShape(args.Shape, path.Child("shape"))...)
 	} else if args.Shape != nil {
 		// When the feature is off, return an error if the config is not nil.
@@ -351,10 +311,14 @@ func ValidateNodeResourcesFitArgs(path *field.Path, args *config.NodeResourcesFi
 		}
 	}
 
+	strategyPath := path.Child("scoringStrategy")
 	if args.ScoringStrategy != nil {
-		allErrs = append(allErrs, validateResources(args.ScoringStrategy.Resources, path.Child("resources"))...)
-		if args.ScoringStrategy.RequestedToCapacityRatio != nil && len(args.ScoringStrategy.RequestedToCapacityRatio.Shape) > 0 {
-			allErrs = append(allErrs, validateFunctionShape(args.ScoringStrategy.RequestedToCapacityRatio.Shape, path.Child("shape"))...)
+		if !supportedScoringStrategyTypes.Has(string(args.ScoringStrategy.Type)) {
+			allErrs = append(allErrs, field.NotSupported(strategyPath.Child("type"), args.ScoringStrategy.Type, sets.List(supportedScoringStrategyTypes)))
+		}
+		allErrs = append(allErrs, validateResources(args.ScoringStrategy.Resources, strategyPath.Child("resources"))...)
+		if args.ScoringStrategy.RequestedToCapacityRatio != nil {
+			allErrs = append(allErrs, validateFunctionShape(args.ScoringStrategy.RequestedToCapacityRatio.Shape, strategyPath.Child("shape"))...)
 		}
 	}
 

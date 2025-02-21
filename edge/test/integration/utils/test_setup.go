@@ -9,7 +9,7 @@ import (
 
 	"sigs.k8s.io/yaml"
 
-	edgecore "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
+	edgecore "github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 )
 
 const (
@@ -40,6 +40,7 @@ func CreateEdgeCoreConfigFile(nodeName string) error {
 	c.Modules.EdgeHub.TLSCAFile = "/tmp/edgecore/rootCA.crt"
 	c.Modules.EdgeHub.TLSCertFile = "/tmp/edgecore/kubeedge.crt"
 	c.Modules.EdgeHub.TLSPrivateKeyFile = "/tmp/edgecore/kubeedge.key"
+	c.Modules.DeviceTwin.DMISockPath = "/etc/kubeedge/dmi.sock"
 	c.Modules.EventBus.Enable = true
 	c.Modules.EventBus.MqttMode = edgecore.MqttModeInternal
 	c.Modules.DBTest.Enable = true

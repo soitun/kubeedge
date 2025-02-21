@@ -1,13 +1,15 @@
 package dtclient
 
 import (
-	"github.com/astaxie/beego/orm"
+	"context"
+
+	"github.com/beego/beego/v2/client/orm"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 )
 
-//DeviceTwin the struct of device twin
+// DeviceTwin the struct of device twin
 type DeviceTwin struct {
 	ID              int64  `orm:"column(id);size(64);auto;pk"`
 	DeviceID        string `orm:"column(deviceid); null; type(text)"`
@@ -24,32 +26,59 @@ type DeviceTwin struct {
 	Metadata        string `orm:"column(metadata);null;type(text)"`
 }
 
-//SaveDeviceTwin save device twin
-func SaveDeviceTwin(obm orm.Ormer, doc *DeviceTwin) error {
-	num, err := obm.Insert(doc)
-	klog.V(4).Infof("Insert affected Num: %d, %s", num, err)
-	return err
-}
-
-//DeleteDeviceTwinByDeviceID delete device twin
-func DeleteDeviceTwinByDeviceID(obm orm.Ormer, deviceID string) error {
-	num, err := obm.QueryTable(DeviceTwinTableName).Filter("deviceid", deviceID).Delete()
+// SaveDeviceTwin save device twin
+func SaveDeviceTwin(o orm.Ormer, doc *DeviceTwin) error {
+	err := o.DoTx(func(ctx context.Context, txOrm orm.TxOrmer) error {
+		// insert data
+		// Using txOrm to execute SQL
+		_, e := txOrm.Insert(doc)
+		// if e != nil the transaction will be rollback
+		// or it will be committed
+		return e
+	})
 	if err != nil {
-		klog.Errorf("Something wrong when deleting data: %v", err)
+		klog.Errorf("Something wrong when insert DeviceTwin data: %v", err)
 		return err
 	}
-	klog.V(4).Infof("Delete affected Num: %d", num)
+	klog.V(4).Info("insert DeviceTwin data successfully")
 	return nil
 }
 
-//DeleteDeviceTwin delete device twin
-func DeleteDeviceTwin(obm orm.Ormer, deviceID string, name string) error {
-	num, err := obm.QueryTable(DeviceTwinTableName).Filter("deviceid", deviceID).Filter("name", name).Delete()
+// DeleteDeviceTwinByDeviceID delete device twin
+func DeleteDeviceTwinByDeviceID(o orm.Ormer, deviceID string) error {
+	err := o.DoTx(func(ctx context.Context, txOrm orm.TxOrmer) error {
+		// Delete data
+		// Using txOrm to execute SQL
+		_, e := txOrm.QueryTable(DeviceTwinTableName).Filter("deviceid", deviceID).Delete()
+		// if e != nil the transaction will be rollback
+		// or it will be committed
+		return e
+	})
+
 	if err != nil {
-		klog.Errorf("Something wrong when deleting data: %v", err)
+		klog.Errorf("Something wrong when deleting Device data: %v", err)
 		return err
 	}
-	klog.V(4).Infof("Delete affected Num: %d", num)
+	klog.V(4).Info("Delete Device data successfully")
+	return nil
+}
+
+// DeleteDeviceTwin delete device twin
+func DeleteDeviceTwin(o orm.Ormer, deviceID string, name string) error {
+	err := o.DoTx(func(ctx context.Context, txOrm orm.TxOrmer) error {
+		// Delete data
+		// Using txOrm to execute SQL
+		_, e := txOrm.QueryTable(DeviceTwinTableName).Filter("deviceid", deviceID).Filter("name", name).Delete()
+		// if e != nil the transaction will be rollback
+		// or it will be committed
+		return e
+	})
+
+	if err != nil {
+		klog.Errorf("Something wrong when deleting Device Twin data: %v", err)
+		return err
+	}
+	klog.V(4).Info("Delete Device Twin data successfully")
 	return nil
 }
 
@@ -61,8 +90,8 @@ func UpdateDeviceTwinField(deviceID string, name string, col string, value inter
 }
 
 // UpdateDeviceTwinFields update special fields
-func UpdateDeviceTwinFields(obm orm.Ormer, deviceID string, name string, cols map[string]interface{}) error {
-	num, err := obm.QueryTable(DeviceTwinTableName).Filter("deviceid", deviceID).Filter("name", name).Update(cols)
+func UpdateDeviceTwinFields(o orm.Ormer, deviceID string, name string, cols map[string]interface{}) error {
+	num, err := o.QueryTable(DeviceTwinTableName).Filter("deviceid", deviceID).Filter("name", name).Update(cols)
 	klog.V(4).Infof("Update affected Num: %d, %v", num, err)
 	return err
 }
@@ -77,18 +106,17 @@ func QueryDeviceTwin(key string, condition string) (*[]DeviceTwin, error) {
 	return twin, nil
 }
 
-//DeviceTwinUpdate the struct for updating device twin
+// DeviceTwinUpdate the struct for updating device twin
 type DeviceTwinUpdate struct {
 	DeviceID string
 	Name     string
 	Cols     map[string]interface{}
 }
 
-//UpdateDeviceTwinMulti update device twin multi
+// UpdateDeviceTwinMulti update device twin multi
 func UpdateDeviceTwinMulti(updates []DeviceTwinUpdate) error {
-	var err error
 	for _, update := range updates {
-		err = UpdateDeviceTwinFields(dbm.DBAccess, update.DeviceID, update.Name, update.Cols)
+		err := UpdateDeviceTwinFields(dbm.DBAccess, update.DeviceID, update.Name, update.Cols)
 		if err != nil {
 			return err
 		}
@@ -96,25 +124,10 @@ func UpdateDeviceTwinMulti(updates []DeviceTwinUpdate) error {
 	return nil
 }
 
-//DeviceTwinTrans transaction of device twin
+// DeviceTwinTrans transaction of device twin
 func DeviceTwinTrans(adds []DeviceTwin, deletes []DeviceDelete, updates []DeviceTwinUpdate) error {
 	obm := dbm.DefaultOrmFunc()
-	err := obm.Begin()
-	if err != nil {
-		klog.Errorf("failed to begin transaction: %v", err)
-		return err
-	}
-
-	defer func() {
-		if err != nil {
-			dbm.RollbackTransaction(obm)
-		} else {
-			err = obm.Commit()
-			if err != nil {
-				klog.Errorf("failed to commit transaction: %v", err)
-			}
-		}
-	}()
+	var err error
 
 	for _, add := range adds {
 		err = SaveDeviceTwin(obm, &add)

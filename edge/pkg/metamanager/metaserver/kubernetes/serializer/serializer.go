@@ -31,6 +31,7 @@ func (f WithoutConversionCodecFactory) SupportedMediaTypes() []runtime.Serialize
 			EncodesAsText:    true,
 			Serializer:       json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Pretty: false}),
 			PrettySerializer: json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Pretty: true}),
+			StrictSerializer: json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Strict: true}),
 			StreamSerializer: &runtime.StreamSerializerInfo{
 				EncodesAsText: true,
 				Serializer:    json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Pretty: false}),
@@ -42,7 +43,7 @@ func (f WithoutConversionCodecFactory) SupportedMediaTypes() []runtime.Serialize
 			MediaTypeType:    "application",
 			MediaTypeSubType: "yaml",
 			EncodesAsText:    true,
-			Serializer:       json.NewYAMLSerializer(json.DefaultMetaFactory, f.creator, f.typer),
+			Serializer:       json.NewSerializerWithOptions(json.DefaultMetaFactory, f.creator, f.typer, json.SerializerOptions{Yaml: true}),
 		},
 	}
 }
@@ -97,7 +98,7 @@ type WithKindGroupVersioner struct {
 	gvk schema.GroupVersionKind
 }
 
-func (s *WithKindGroupVersioner) KindForGroupVersionKinds(kinds []schema.GroupVersionKind) (target schema.GroupVersionKind, ok bool) {
+func (s *WithKindGroupVersioner) KindForGroupVersionKinds(_ []schema.GroupVersionKind) (target schema.GroupVersionKind, ok bool) {
 	return s.gvk, true
 }
 func (s *WithKindGroupVersioner) Identifier() string {

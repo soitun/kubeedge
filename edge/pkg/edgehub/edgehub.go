@@ -7,19 +7,18 @@ import (
 	"k8s.io/client-go/util/flowcontrol"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/certificate"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/clients"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
-
-	// register Upgrade handler
-	_ "github.com/kubeedge/kubeedge/edge/pkg/edgehub/upgrade"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
+	// register Task handler
+	_ "github.com/kubeedge/kubeedge/edge/pkg/edgehub/task"
 )
 
-//EdgeHub defines edgehub object structure
+// EdgeHub defines edgehub object structure
 type EdgeHub struct {
 	certManager   certificate.CertManager
 	chClient      clients.Adapter
@@ -38,9 +37,8 @@ func GetCertSyncChannel() map[string]chan bool {
 }
 
 func NewCertSyncChannel() map[string]chan bool {
-	certSync = make(map[string]chan bool, 2)
+	certSync = make(map[string]chan bool, 1)
 	certSync[modules.EdgeStreamModuleName] = make(chan bool, 1)
-	certSync[modules.MetaManagerModuleName] = make(chan bool, 1)
 	return certSync
 }
 
@@ -61,22 +59,22 @@ func Register(eh *v1alpha2.EdgeHub, nodeName string) {
 	core.Register(newEdgeHub(eh.Enable))
 }
 
-//Name returns the name of EdgeHub module
+// Name returns the name of EdgeHub module
 func (eh *EdgeHub) Name() string {
 	return modules.EdgeHubModuleName
 }
 
-//Group returns EdgeHub group
+// Group returns EdgeHub group
 func (eh *EdgeHub) Group() string {
 	return modules.HubGroup
 }
 
-//Enable indicates whether this module is enabled
+// Enable indicates whether this module is enabled
 func (eh *EdgeHub) Enable() bool {
 	return eh.enable
 }
 
-//Start sets context and starts the controller
+// Start sets context and starts the controller
 func (eh *EdgeHub) Start() {
 	eh.certManager = certificate.NewCertManager(config.Config.EdgeHub, config.Config.NodeName)
 	eh.certManager.Start()

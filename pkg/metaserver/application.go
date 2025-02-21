@@ -32,31 +32,39 @@ import (
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
-	commontypes "github.com/kubeedge/kubeedge/common/types"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 )
 
 // Application record the resources that are in applying for requesting to be transferred down from the cloud, please:
 // 0.use Agent.Generate to generate application
 // 1.use Agent.Apply to apply application( generate msg and send it to cloud dynamiccontroller)
 type Application struct {
-	ID          string
-	Key         string // group version resource namespaces name
+	// ID is the SHA256 checksum generated from request information
+	ID string
+
+	// The following field defines the Application request information
+	// Key format: group version resource namespaces name
+	Key         string
 	Verb        ApplicationVerb
 	Nodename    string
-	Status      ApplicationStatus
-	Reason      string // why in this status
-	Option      []byte //
-	ReqBody     []byte // better a k8s api instance
-	RespBody    []byte
+	Option      []byte
+	ReqBody     []byte
 	Subresource string
-	Error       apierrors.StatusError
-	Token       string
-	ctx         context.Context // to end app.Wait
-	cancel      context.CancelFunc
 
-	count     uint64 // count the number of current citations
-	countLock sync.Mutex
-	Timestamp time.Time // record the last closing time of application, only make sense when count == 0
+	// The following field defines the Application response result
+	RespBody []byte
+	Status   ApplicationStatus
+	Reason   string // why in this status
+	Error    apierrors.StatusError
+
+	ctx    context.Context // to end app.Wait
+	cancel context.CancelFunc
+
+	// count the number of current citations
+	count     uint64
+	countLock *sync.Mutex
+	// Timestamp record the last closing time of application, only make sense when count == 0
+	Timestamp time.Time
 }
 
 func NewApplication(ctx context.Context, key string, verb ApplicationVerb, nodename, subresource string, option interface{}, reqBody interface{}) (*Application, error) {
@@ -69,11 +77,6 @@ func NewApplication(ctx context.Context, key string, verb ApplicationVerb, noden
 		}
 		option = v1
 	}
-	token, ok := ctx.Value(commontypes.AuthorizationKey).(string)
-	if !ok {
-		klog.Errorf("unsupported Token type :%T", ctx.Value(commontypes.AuthorizationKey))
-		return nil, fmt.Errorf("unsupported Token type :%T", ctx.Value(commontypes.AuthorizationKey))
-	}
 	ctx2, cancel := context.WithCancel(ctx)
 	app := &Application{
 		Key:         key,
@@ -83,11 +86,10 @@ func NewApplication(ctx context.Context, key string, verb ApplicationVerb, noden
 		Status:      PreApplying,
 		Option:      ToBytes(option),
 		ReqBody:     ToBytes(reqBody),
-		Token:       token,
 		ctx:         ctx2,
 		cancel:      cancel,
 		count:       0,
-		countLock:   sync.Mutex{},
+		countLock:   &sync.Mutex{},
 		Timestamp:   time.Time{},
 	}
 	app.Add()
@@ -104,7 +106,6 @@ func (a *Application) Identifier() string {
 	b = append(b, a.Option...)
 	b = append(b, a.ReqBody...)
 	b = append(b, []byte(a.Subresource)...)
-	b = append(b, []byte(a.Token)...)
 	a.ID = fmt.Sprintf("%x", sha256.Sum256(b))
 	return a.ID
 }
@@ -125,7 +126,7 @@ func (a *Application) RespContent() interface{} {
 func (a *Application) OptionTo(i interface{}) error {
 	err := json.Unmarshal(a.Option, i)
 	if err != nil {
-		return fmt.Errorf("failed to prase Option bytes, %v", err)
+		return fmt.Errorf("failed to parse Option bytes, %v", err)
 	}
 	return nil
 }
@@ -156,7 +157,7 @@ func (a *Application) Namespace() string {
 	return ns
 }
 
-func (a *Application) Call() {
+func (a *Application) Cancel() {
 	if a.cancel != nil {
 		a.cancel()
 	}
@@ -247,5 +248,27 @@ func MsgToApplication(msg model.Message) (*Application, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	nodeID, err := messagelayer.GetNodeID(msg)
+	if err != nil {
+		nodeID = app.Nodename
+	}
+	app.Nodename = nodeID
 	return app, nil
+}
+
+// MsgToApplications extract applications in message's Content
+func MsgToApplications(msg model.Message) (map[string]Application, error) {
+	contentData, err := msg.GetContentData()
+	if err != nil {
+		return nil, err
+	}
+
+	applications := make(map[string]Application)
+
+	err = json.Unmarshal(contentData, &applications)
+	if err != nil {
+		return nil, err
+	}
+	return applications, nil
 }

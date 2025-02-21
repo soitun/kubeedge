@@ -1,79 +1,93 @@
 package image
 
 import (
-	"reflect"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"github.com/kubeedge/kubeedge/common/constants"
+	"github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
 )
 
 func TestEdgeSet(t *testing.T) {
-	type args struct {
-		imageRepository string
-		version         string
-	}
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
-		args args
+		args common.JoinOptions
 		want Set
 	}{
 		{
-			name: "repo nil, ver not nil",
-			args: args{
-				imageRepository: "",
-				version:         "v1.9.1",
+			name: "repo nil, ver not nil, need mqtt",
+			args: common.JoinOptions{
+				ImageRepository: "",
+				WithMQTT:        true,
+				KubeEdgeVersion: "v1.9.1",
 			},
 			want: Set{
-				EdgeCore:  "kubeedge/installation-package:v1.9.1",
-				EdgeMQTT:  "eclipse-mosquitto:1.6.15",
-				EdgePause: "kubeedge/pause:3.1",
+				EdgeCore: "kubeedge/installation-package:v1.9.1",
+				EdgeMQTT: constants.DefaultMosquittoImage,
 			},
 		},
 		{
-			name: "repo nil, ver nil",
-			args: args{
-				imageRepository: "",
-				version:         "",
+			name: "repo nil, ver nil, , need mqtt",
+			args: common.JoinOptions{
+				ImageRepository: "",
+				WithMQTT:        true,
+				KubeEdgeVersion: "",
 			},
 			want: Set{
-				EdgeCore:  "kubeedge/installation-package",
-				EdgeMQTT:  "eclipse-mosquitto:1.6.15",
-				EdgePause: "kubeedge/pause:3.1",
+				EdgeCore: "kubeedge/installation-package",
+				EdgeMQTT: constants.DefaultMosquittoImage,
 			},
 		},
 		{
-			name: "repo not nil, ver not nil",
-			args: args{
-				imageRepository: "kubeedge-test",
-				version:         "v1.9.1",
+			name: "repo not nil, ver not nil, , need mqtt",
+			args: common.JoinOptions{
+				ImageRepository: "kubeedge-test",
+				WithMQTT:        true,
+				KubeEdgeVersion: "v1.9.1",
 			},
 			want: Set{
-				EdgeCore:  "kubeedge-test/installation-package:v1.9.1",
-				EdgeMQTT:  "kubeedge-test/eclipse-mosquitto:1.6.15",
-				EdgePause: "kubeedge-test/pause:3.1",
+				EdgeCore: "kubeedge-test/installation-package:v1.9.1",
+				EdgeMQTT: "kubeedge-test/" + constants.DefaultMosquittoImage,
+			},
+		},
+		{
+			name: "repo not nil, ver not nil, , don't need mqtt",
+			args: common.JoinOptions{
+				ImageRepository: "kubeedge-test",
+				WithMQTT:        false,
+				KubeEdgeVersion: "v1.9.1",
+			},
+			want: Set{
+				EdgeCore: "kubeedge-test/installation-package:v1.9.1",
 			},
 		},
 		{
 			name: "repo not nil, ver nil",
-			args: args{
-				imageRepository: "kubeedge-test",
-				version:         "",
+			args: common.JoinOptions{
+				ImageRepository: "kubeedge-test",
+				WithMQTT:        true,
+				KubeEdgeVersion: "",
 			},
 			want: Set{
-				EdgeCore:  "kubeedge-test/installation-package",
-				EdgeMQTT:  "kubeedge-test/eclipse-mosquitto:1.6.15",
-				EdgePause: "kubeedge-test/pause:3.1",
+				EdgeCore: "kubeedge-test/installation-package",
+				EdgeMQTT: "kubeedge-test/" + constants.DefaultMosquittoImage,
 			},
 		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := EdgeSet(tt.args.imageRepository, tt.args.version); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("EdgeSet() = %v, want %v", got, tt.want)
-			}
+			got := EdgeSet(&tt.args)
+			assert.Equal(tt.want, got)
 		})
 	}
 }
 
 func TestCloudSet(t *testing.T) {
+	assert := assert.New(t)
+
 	type args struct {
 		imageRepository string
 		version         string
@@ -138,14 +152,15 @@ func TestCloudSet(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := CloudSet(tt.args.imageRepository, tt.args.version); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("CloudSet() = %v, want %v", got, tt.want)
-			}
+			got := CloudSet(tt.args.imageRepository, tt.args.version)
+			assert.Equal(tt.want, got)
 		})
 	}
 }
 
 func TestSet_Get(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		s    Set
@@ -161,14 +176,15 @@ func TestSet_Get(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.s.Get(tt.args); got != tt.want {
-				t.Errorf("Set.Get() = %v, want %v", got, tt.want)
-			}
+			got := tt.s.Get(tt.args)
+			assert.Equal(tt.want, got)
 		})
 	}
 }
 
 func TestSet_List(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		s    Set
@@ -192,14 +208,14 @@ func TestSet_List(t *testing.T) {
 			for _, v := range tt.want {
 				wantMap[v] = ""
 			}
-			if !reflect.DeepEqual(gotMap, wantMap) {
-				t.Errorf("Set.List() = %v, but want %v", got, tt.want)
-			}
+			assert.Equal(wantMap, gotMap)
 		})
 	}
 }
 
 func TestSet_Merge(t *testing.T) {
+	assert := assert.New(t)
+
 	tests := []struct {
 		name string
 		s    Set
@@ -227,9 +243,35 @@ func TestSet_Merge(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if got := tt.s.Merge(tt.args); !reflect.DeepEqual(got, tt.want) {
-				t.Errorf("Set.Merge() = %v, want %v", got, tt.want)
-			}
+			got := tt.s.Merge(tt.args)
+			assert.Equal(tt.want, got)
+		})
+	}
+}
+
+func TestSet_Remove(t *testing.T) {
+	assert := assert.New(t)
+
+	tests := []struct {
+		name string
+		s    Set
+		want Set
+	}{
+		{
+			name: "get edgecore image",
+			s: Set{
+				EdgeCore: "kubeedge/installation-package:v1.12.2",
+				EdgeMQTT: "kubeedge/" + constants.DefaultMosquittoImage,
+			},
+			want: Set{
+				EdgeCore: "kubeedge/installation-package:v1.12.2",
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := tt.s.Remove(EdgeMQTT)
+			assert.Equal(tt.want, got)
 		})
 	}
 }

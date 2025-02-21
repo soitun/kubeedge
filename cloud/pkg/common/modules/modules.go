@@ -7,11 +7,17 @@ const (
 	EdgeControllerModuleName = "edgecontroller"
 	EdgeControllerGroupName  = "edgecontroller"
 
+	PolicyControllerModuleName = "policycontroller"
+	PolicyControllerGroupName  = "policycontroller"
+
 	DeviceControllerModuleName  = "devicecontroller"
 	DeviceControllerModuleGroup = "devicecontroller"
 
 	NodeUpgradeJobControllerModuleName  = "nodeupgradejobcontroller"
 	NodeUpgradeJobControllerModuleGroup = "nodeupgradejobcontroller"
+
+	TaskManagerModuleName  = "taskmanager"
+	TaskManagerModuleGroup = "taskmanager"
 
 	SyncControllerModuleName  = "synccontroller"
 	SyncControllerModuleGroup = "synccontroller"

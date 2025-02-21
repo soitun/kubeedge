@@ -158,7 +158,7 @@ func TestGetLatestVersion(t *testing.T) {
 	}
 }
 
-func TestHasSystemd(t *testing.T) {
+func TestHasSystemd(*testing.T) {
 	HasSystemd()
 }
 
@@ -371,6 +371,41 @@ func TestValidateStableVersion(t *testing.T) {
 			}
 			if output != tc.output {
 				t.Fatalf("expected output: %s, got: %s", tc.output, output)
+			}
+		})
+	}
+}
+
+func TestGetHelmVersion(t *testing.T) {
+	cases := []struct {
+		name       string
+		version    string
+		retryTimes int    // if zero, means don't obtant remote version
+		want       string // if want is empty, means not check result
+	}{
+		{
+			name:    "get input version",
+			version: "v1.14.0",
+			want:    "1.14.0",
+		},
+		{
+			name:       "get default version",
+			version:    "1-14-0",
+			retryTimes: 0,
+			want:       types.DefaultKubeEdgeVersion,
+		},
+		{
+			name:       "get remote version",
+			version:    "1-14-0",
+			retryTimes: 1,
+			want:       "", // obtain the remote version is not controllable
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			res := GetHelmVersion(c.version, c.retryTimes)
+			if c.want != "" && c.want != res {
+				t.Fatalf("expected output: %s, got: %s", c.want, res)
 			}
 		})
 	}

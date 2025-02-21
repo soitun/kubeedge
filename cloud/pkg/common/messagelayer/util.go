@@ -36,12 +36,13 @@ const (
 	ResourceResourceTypeIndex = 3
 	ResourceResourceNameIndex = 4
 
-	ResourceDeviceIndex   = 2
-	ResourceDeviceIDIndex = 3
+	ResourceDeviceIndex          = 2
+	ResourceDeviceNamespaceIndex = 3
 
 	ResourceDevice               = "device"
 	ResourceTypeTwinEdgeUpdated  = "twin/edge_updated"
 	ResourceTypeMembershipDetail = "membership/detail"
+	ResourceDeviceStateUpdated   = "state/update"
 )
 
 // BuildResource return a string as "beehive/pkg/core/model".Message.Router.Resource
@@ -128,22 +129,23 @@ func BuildResourceForDevice(nodeID, resourceType, resourceID string) (resource s
 	return
 }
 
-// GetDeviceID returns the ID of the device
+// GetDeviceID returns the ID of the device,resource's format:$hw/events/device/{namespace}/{deviceName}
 func GetDeviceID(resource string) (string, error) {
 	res := strings.Split(resource, "/")
-	if len(res) >= ResourceDeviceIDIndex+1 && res[ResourceDeviceIndex] == ResourceDevice {
-		return res[ResourceDeviceIDIndex], nil
+	if len(res) >= ResourceDeviceNamespaceIndex+2 && res[ResourceDeviceIndex] == ResourceDevice {
+		return res[ResourceDeviceNamespaceIndex] + "/" + res[ResourceDeviceNamespaceIndex+1], nil
 	}
 	return "", errors.New("failed to get device id")
 }
 
-// GetResourceType returns the resourceType of message received from edge
+// GetResourceTypeForDevice returns the resourceType of message received from edge
 func GetResourceTypeForDevice(resource string) (string, error) {
 	if strings.Contains(resource, ResourceTypeTwinEdgeUpdated) {
 		return ResourceTypeTwinEdgeUpdated, nil
 	} else if strings.Contains(resource, ResourceTypeMembershipDetail) {
 		return ResourceTypeMembershipDetail, nil
+	} else if strings.Contains(resource, ResourceDeviceStateUpdated) {
+		return ResourceDeviceStateUpdated, nil
 	}
-
 	return "", fmt.Errorf("unknown resource, found: %s", resource)
 }

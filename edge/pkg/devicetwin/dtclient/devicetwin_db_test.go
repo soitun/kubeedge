@@ -19,50 +19,23 @@ package dtclient
 import (
 	"testing"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 	"github.com/golang/mock/gomock"
 
-	"github.com/kubeedge/kubeedge/edge/mocks/beego"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 )
 
 // TestSaveDeviceTwin is function to test SaveDeviceTwin
 func TestSaveDeviceTwin(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// returnInt is first return of mock interface ormerMock
-		returnInt int64
-		// returnErr is second return of mock interface ormerMock which is also expected error
-		returnErr error
-	}{{
-		// Success Case
-		name:      "SuccessCase",
-		returnInt: int64(1),
-		returnErr: nil,
-	}, {
-		// Failure Case
-		name:      "FailureCase",
-		returnInt: int64(1),
-		returnErr: errFailedDBOperation,
-	},
-	}
+	ormerMock, cases := GetCasesSave(t)
 
 	// run the test cases
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			ormerMock.EXPECT().Insert(gomock.Any()).Return(test.returnInt, test.returnErr).Times(1)
+			ormerMock.EXPECT().DoTx(gomock.Any()).Return(test.doTXReturnErr).Times(1)
 			err := SaveDeviceTwin(dbm.DBAccess, &DeviceTwin{})
-			if test.returnErr != err {
-				t.Errorf("Save Device Twin Case failed: wanted error %v and got error %v", test.returnErr, err)
+			if test.doTXReturnErr != err {
+				t.Errorf("Save Device Twin Case failed: wanted error %v and got error %v", test.doTXReturnErr, err)
 			}
 		})
 	}
@@ -70,51 +43,13 @@ func TestSaveDeviceTwin(t *testing.T) {
 
 // TestDeleteDeviceTwinByDeviceID is function to test DeleteDeviceTwinByDeviceID
 func TestDeleteDeviceTwinByDeviceID(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// deleteReturnInt is the first return of mock interface querySeterMock's delete function
-		deleteReturnInt int64
-		// deleteReturnErr is the second return of mock interface querySeterMocks's delete function also expected error
-		deleteReturnErr error
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-	}{{
-		// Success Case
-		name:             "SuccessCase",
-		filterReturn:     querySeterMock,
-		deleteReturnInt:  int64(1),
-		deleteReturnErr:  nil,
-		queryTableReturn: querySeterMock,
-	}, {
-		// Failure Case
-		name:             "FailureCase",
-		filterReturn:     querySeterMock,
-		deleteReturnInt:  int64(0),
-		deleteReturnErr:  errFailedDBOperation,
-		queryTableReturn: querySeterMock,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesDelete(t)
 
 	// run the test cases
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(test.filterReturn).Times(1)
-			querySeterMock.EXPECT().Delete().Return(test.deleteReturnInt, test.deleteReturnErr).Times(1)
-			ormerMock.EXPECT().QueryTable(gomock.Any()).Return(test.queryTableReturn).Times(1)
+			ormerMock.EXPECT().DoTx(gomock.Any()).Return(test.deleteReturnErr).Times(1)
 			err := DeleteDeviceTwinByDeviceID(dbm.DBAccess, "test")
 			if test.deleteReturnErr != err {
 				t.Errorf("DeleteDeviceTwinByDeviceID Case failed: wanted error %v and got error %v", test.deleteReturnErr, err)
@@ -125,51 +60,13 @@ func TestDeleteDeviceTwinByDeviceID(t *testing.T) {
 
 // TestDeleteDeviceTwin is function to test DeleteDeviceTwin
 func TestDeleteDeviceTwin(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// deleteReturnInt is the first return of mock interface querySeterMock's delete function
-		deleteReturnInt int64
-		// deleteReturnErr is the second return of mock interface querySeterMocks's delete function also expected error
-		deleteReturnErr error
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-	}{{
-		// Success Case
-		name:             "SuccessCase",
-		filterReturn:     querySeterMock,
-		deleteReturnInt:  int64(1),
-		deleteReturnErr:  nil,
-		queryTableReturn: querySeterMock,
-	}, {
-		// Failure Case
-		name:             "FailureCase",
-		filterReturn:     querySeterMock,
-		deleteReturnInt:  int64(0),
-		deleteReturnErr:  errFailedDBOperation,
-		queryTableReturn: querySeterMock,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesDelete(t)
 
 	// run the test cases
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
 			querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(test.filterReturn).Times(2)
-			querySeterMock.EXPECT().Delete().Return(test.deleteReturnInt, test.deleteReturnErr).Times(1)
-			ormerMock.EXPECT().QueryTable(gomock.Any()).Return(test.queryTableReturn).Times(1)
+			ormerMock.EXPECT().DoTx(gomock.Any()).Return(test.deleteReturnErr).Times(1)
 			err := DeleteDeviceTwin(dbm.DBAccess, "test", "test")
 			if test.deleteReturnErr != err {
 				t.Errorf("DeleteDeviceTwin Case failed: wanted error %v and got error %v", test.deleteReturnErr, err)
@@ -180,44 +77,7 @@ func TestDeleteDeviceTwin(t *testing.T) {
 
 // TestUpdateDeviceTwinField is function to test UpdateDeviceTwinField
 func TestUpdateDeviceTwinField(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// updateReturnInt is the first return of mock interface querySeterMock's update function
-		updateReturnInt int64
-		// updateReturnErr is the second return of mock interface querySeterMocks's update function also expected error
-		updateReturnErr error
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-	}{{
-		// Success Case
-		name:             "SuccessCase",
-		filterReturn:     querySeterMock,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  nil,
-		queryTableReturn: querySeterMock,
-	}, {
-		// Failure Case
-		name:             "FailureCase",
-		filterReturn:     querySeterMock,
-		updateReturnInt:  int64(0),
-		updateReturnErr:  errFailedDBOperation,
-		queryTableReturn: querySeterMock,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesUpdate(t)
 
 	// run the test cases
 	for _, test := range cases {
@@ -235,44 +95,7 @@ func TestUpdateDeviceTwinField(t *testing.T) {
 
 // TestUpdateDeviceTwinFields is function to test UpdateDeviceTwinFields
 func TestUpdateDeviceTwinFields(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// updateReturnInt is the first return of mock interface querySeterMock's update function
-		updateReturnInt int64
-		// updateReturnErr is the second return of mock interface querySeterMocks's update function also expected error
-		updateReturnErr error
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-	}{{
-		// Success Case
-		name:             "SuccessCase",
-		filterReturn:     querySeterMock,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  nil,
-		queryTableReturn: querySeterMock,
-	}, {
-		// Failure Case
-		name:             "FailureCase",
-		filterReturn:     querySeterMock,
-		updateReturnInt:  int64(0),
-		updateReturnErr:  errFailedDBOperation,
-		queryTableReturn: querySeterMock,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesUpdate(t)
 
 	// run the test cases
 	for _, test := range cases {
@@ -290,44 +113,7 @@ func TestUpdateDeviceTwinFields(t *testing.T) {
 
 // TestQueryDeviceTwin is function to test QueryDeviceTwin
 func TestQueryDeviceTwin(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// allReturnInt is the first return of mock interface querySeterMock's all function
-		allReturnInt int64
-		// allReturnErr is the second return of mock interface querySeterMocks's all function also expected error
-		allReturnErr error
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-	}{{
-		// Success Case
-		name:             "SuccessCase",
-		filterReturn:     querySeterMock,
-		allReturnInt:     int64(1),
-		allReturnErr:     nil,
-		queryTableReturn: querySeterMock,
-	}, {
-		// Failure Case
-		name:             "FailureCase",
-		filterReturn:     querySeterMock,
-		allReturnInt:     int64(0),
-		allReturnErr:     errFailedDBOperation,
-		queryTableReturn: querySeterMock,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesQuery(t)
 
 	// fakeDeviceTwin is used to set the argument of All function
 	fakeDeviceTwin := new([]DeviceTwin)
@@ -357,44 +143,7 @@ func TestQueryDeviceTwin(t *testing.T) {
 
 // TestUpdateDeviceTwinMulti is function to test UpdateDeviceTwinMulti
 func TestUpdateDeviceTwinMulti(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// updateReturnInt is the first return of mock interface querySeterMock's update function
-		updateReturnInt int64
-		// updateReturnErr is the second return of mock interface querySeterMocks's update function also expected error
-		updateReturnErr error
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-	}{{
-		// Success Case
-		name:             "SuccessCase",
-		filterReturn:     querySeterMock,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  nil,
-		queryTableReturn: querySeterMock,
-	}, {
-		// Failure Case
-		name:             "FailureCase",
-		filterReturn:     querySeterMock,
-		updateReturnInt:  int64(0),
-		updateReturnErr:  errFailedDBOperation,
-		queryTableReturn: querySeterMock,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesUpdate(t)
 
 	// updateDevice is argument to UpdateDeviceTwinMulti function
 	updateDevice := make([]DeviceTwinUpdate, 0)
@@ -416,136 +165,7 @@ func TestUpdateDeviceTwinMulti(t *testing.T) {
 
 // TestDeviceTwinTrans is function to test DeviceTwinTrans
 func TestDeviceTwinTrans(t *testing.T) {
-	// ormerMock is mocked Ormer implementation
-	var ormerMock *beego.MockOrmer
-	// querySeterMock is mocked QuerySeter implementation
-	var querySeterMock *beego.MockQuerySeter
-
-	mockCtrl := gomock.NewController(t)
-	defer mockCtrl.Finish()
-	ormerMock = beego.NewMockOrmer(mockCtrl)
-	querySeterMock = beego.NewMockQuerySeter(mockCtrl)
-	dbm.DBAccess = ormerMock
-
-	cases := []struct {
-		// name is name of the testcase
-		name string
-		// rollBackTimes is number of times rollback is expected
-		rollBackTimes int
-		// commitTimes is number of times commit is expected
-		commitTimes int
-		// beginTimes is number of times begin is expected
-		beginTimes int
-		// filterReturn is the return of mock interface querySeterMock's filter function
-		filterReturn orm.QuerySeter
-		// filterTimes is the number of times filter is called
-		filterTimes int
-		// insertReturnInt is the first return of mock interface ormerMock's Insert function
-		insertReturnInt int64
-		// insertReturnErr is the second return of mock interface ormerMock's Insert function
-		insertReturnErr error
-		// insertTimes is number of times Insert is expected
-		insertTimes int
-		// deleteReturnInt is the first return of mock interface ormerMock's Delete function
-		deleteReturnInt int64
-		// deleteReturnErr is the second return of mock interface ormerMock's Delete function
-		deleteReturnErr error
-		// deleteTimes is number of times Delete is expected
-		deleteTimes int
-		// updateReturnInt is the first return of mock interface ormerMock's Update function
-		updateReturnInt int64
-		// updateReturnErr is the second return of mock interface ormerMock's Update function
-		updateReturnErr error
-		// updateTimes is number of times Update is expected
-		updateTimes int
-		// queryTableReturn is the return of mock interface ormerMock's QueryTable function
-		queryTableReturn orm.QuerySeter
-		// queryTableTimes is the number of times queryTable is called
-		queryTableTimes int
-		// wantErr is expected error
-		wantErr error
-	}{{
-		// Failure Case SaveDeviceTwin
-		name:             "DeviceTwinTransSaveDeviceTwinFailureCase",
-		rollBackTimes:    1,
-		commitTimes:      0,
-		beginTimes:       1,
-		filterReturn:     nil,
-		filterTimes:      0,
-		insertReturnInt:  int64(1),
-		insertReturnErr:  errFailedDBOperation,
-		insertTimes:      1,
-		deleteReturnInt:  int64(1),
-		deleteReturnErr:  nil,
-		deleteTimes:      0,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  nil,
-		updateTimes:      0,
-		queryTableReturn: nil,
-		queryTableTimes:  0,
-		wantErr:          errFailedDBOperation,
-	}, {
-		// Failure Case DeleteDeviceTwin
-		name:             "DeviceTwinTransDeleteDeviceTwinFailureCase",
-		rollBackTimes:    1,
-		commitTimes:      0,
-		beginTimes:       1,
-		filterReturn:     querySeterMock,
-		filterTimes:      2,
-		insertReturnInt:  int64(1),
-		insertReturnErr:  nil,
-		insertTimes:      1,
-		deleteReturnInt:  int64(1),
-		deleteReturnErr:  errFailedDBOperation,
-		deleteTimes:      1,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  nil,
-		updateTimes:      0,
-		queryTableReturn: querySeterMock,
-		queryTableTimes:  1,
-		wantErr:          errFailedDBOperation,
-	}, {
-		// Failure Case UpdateDeviceTwinFields
-		name:             "DeviceTwinTransUpdateDeviceTwinFieldsFailureCase",
-		rollBackTimes:    1,
-		commitTimes:      0,
-		beginTimes:       1,
-		filterReturn:     querySeterMock,
-		filterTimes:      4,
-		insertReturnInt:  int64(1),
-		insertReturnErr:  nil,
-		insertTimes:      1,
-		deleteReturnInt:  int64(1),
-		deleteReturnErr:  nil,
-		deleteTimes:      1,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  errFailedDBOperation,
-		updateTimes:      1,
-		queryTableReturn: querySeterMock,
-		queryTableTimes:  2,
-		wantErr:          errFailedDBOperation,
-	}, {
-		// Success Case
-		name:             "DeviceTwinTransSuccessCase",
-		rollBackTimes:    0,
-		commitTimes:      1,
-		beginTimes:       1,
-		filterReturn:     querySeterMock,
-		filterTimes:      4,
-		insertReturnInt:  int64(1),
-		insertReturnErr:  nil,
-		insertTimes:      1,
-		deleteReturnInt:  int64(1),
-		deleteReturnErr:  nil,
-		deleteTimes:      1,
-		updateReturnInt:  int64(1),
-		updateReturnErr:  nil,
-		updateTimes:      1,
-		queryTableReturn: querySeterMock,
-		queryTableTimes:  2,
-		wantErr:          nil,
-	},
-	}
+	ormerMock, querySeterMock, cases := GetCasesTrans("DeviceTwin", t)
 
 	// adds is fake DeviceTwin used as argument
 	adds := make([]DeviceTwin, 0)
@@ -564,12 +184,9 @@ func TestDeviceTwinTrans(t *testing.T) {
 	// run the test cases
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			ormerMock.EXPECT().Rollback().Return(nil).Times(test.rollBackTimes)
-			ormerMock.EXPECT().Commit().Return(nil).Times(test.commitTimes)
-			ormerMock.EXPECT().Begin().Return(nil).Times(test.beginTimes)
+			ormerMock.EXPECT().DoTx(gomock.Any()).Return(test.insertReturnErr).Times(test.insertTimes)
+			ormerMock.EXPECT().DoTx(gomock.Any()).Return(test.deleteReturnErr).Times(test.deleteTimes)
 			querySeterMock.EXPECT().Filter(gomock.Any(), gomock.Any()).Return(test.filterReturn).Times(test.filterTimes)
-			ormerMock.EXPECT().Insert(gomock.Any()).Return(test.insertReturnInt, test.insertReturnErr).Times(test.insertTimes)
-			querySeterMock.EXPECT().Delete().Return(test.deleteReturnInt, test.deleteReturnErr).Times(test.deleteTimes)
 			querySeterMock.EXPECT().Update(gomock.Any()).Return(test.updateReturnInt, test.updateReturnErr).Times(test.updateTimes)
 			ormerMock.EXPECT().QueryTable(gomock.Any()).Return(test.queryTableReturn).Times(test.queryTableTimes)
 			err := DeviceTwinTrans(adds, deletes, updates)

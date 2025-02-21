@@ -142,7 +142,11 @@ func (sp SyncPodType) String() string {
 
 // IsMirrorPod returns true if the passed Pod is a Mirror Pod.
 func IsMirrorPod(pod *v1.Pod) bool {
-	return false
+	if pod.Annotations == nil {
+		return false
+	}
+	_, ok := pod.Annotations[ConfigMirrorAnnotationKey]
+	return ok
 }
 
 // IsStaticPod returns true if the pod is a static pod.
@@ -154,6 +158,9 @@ func IsStaticPod(pod *v1.Pod) bool {
 // IsCriticalPod returns true if pod's priority is greater than or equal to SystemCriticalPriority.
 func IsCriticalPod(pod *v1.Pod) bool {
 	if IsStaticPod(pod) {
+		return true
+	}
+	if IsMirrorPod(pod) {
 		return true
 	}
 	if pod.Spec.Priority != nil && IsCriticalPodBasedOnPriority(*pod.Spec.Priority) {
@@ -184,4 +191,25 @@ func IsCriticalPodBasedOnPriority(priority int32) bool {
 // IsNodeCriticalPod checks if the given pod is a system-node-critical
 func IsNodeCriticalPod(pod *v1.Pod) bool {
 	return IsCriticalPod(pod) && (pod.Spec.PriorityClassName == scheduling.SystemNodeCritical)
+}
+
+// IsRestartableInitContainer returns true if the initContainer has
+// ContainerRestartPolicyAlways.
+func IsRestartableInitContainer(initContainer *v1.Container) bool {
+	if initContainer.RestartPolicy == nil {
+		return false
+	}
+
+	return *initContainer.RestartPolicy == v1.ContainerRestartPolicyAlways
+}
+
+// HasRestartableInitContainer returns true if the pod has any restartable init
+// container
+func HasRestartableInitContainer(pod *v1.Pod) bool {
+	for _, container := range pod.Spec.InitContainers {
+		if IsRestartableInitContainer(&container) {
+			return true
+		}
+	}
+	return false
 }

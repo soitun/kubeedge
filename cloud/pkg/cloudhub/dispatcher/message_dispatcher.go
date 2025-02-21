@@ -26,18 +26,21 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/reliablesyncs/v1alpha1"
+	reliableclient "github.com/kubeedge/api/client/clientset/versioned"
+	synclisters "github.com/kubeedge/api/client/listers/reliablesyncs/v1alpha1"
 	beehivecontext "github.com/kubeedge/beehive/pkg/core/context"
 	beehivemodel "github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/session"
+	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/synccontroller"
+	taskutil "github.com/kubeedge/kubeedge/cloud/pkg/taskmanager/util"
 	commonconst "github.com/kubeedge/kubeedge/common/constants"
-	"github.com/kubeedge/kubeedge/pkg/apis/reliablesyncs/v1alpha1"
-	reliableclient "github.com/kubeedge/kubeedge/pkg/client/clientset/versioned"
-	synclisters "github.com/kubeedge/kubeedge/pkg/client/listers/reliablesyncs/v1alpha1"
+	v2 "github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
 	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
@@ -63,7 +66,7 @@ import (
 // ------------------------------------------------------------------
 
 // MessageDispatcher is responsible for the dispatch of upstream messages
-// (edge ​​to cloud) and downstream messages (cloud to edge)
+// (edge to cloud) and downstream messages (cloud to edge)
 type MessageDispatcher interface {
 	// DispatchDownstream continuously reads the messages from cloudHub module,
 	// and according to the content of the message, the message is dispatched
@@ -142,7 +145,7 @@ func (md *messageDispatcher) DispatchDownstream() {
 			}
 
 			if !model.IsToEdge(&msg) {
-				klog.Warningf("skip message not to edge node %s: %+v, content %s", nodeID, msg)
+				klog.Warningf("skip message not to edge node %s: %+v", nodeID, msg)
 				continue
 			}
 
@@ -169,15 +172,27 @@ func (md *messageDispatcher) DispatchUpstream(message *beehivemodel.Message, inf
 	case common.IsVolumeResource(message.GetResource()):
 		beehivecontext.SendResp(*message)
 
-	case message.Router.Operation == beehivemodel.ResponseOperation:
+	case message.GetOperation() == beehivemodel.ResponseOperation:
 		err := md.SessionManager.ReceiveMessageAck(info.NodeID, message.Header.ParentID)
 		if err != nil {
 			klog.Errorf("node %s receive message ack err: %v", info.NodeID, err)
 		}
 
+	case message.GetOperation() == beehivemodel.ResponseErrorOperation:
+		klog.Errorf("node %s receive message %s error response: %v", info.NodeID, message.GetID(), message.GetContent())
+
 	case message.GetOperation() == beehivemodel.UploadOperation && message.GetGroup() == modules.UserGroup:
 		message.Router.Resource = fmt.Sprintf("node/%s/%s", info.NodeID, message.Router.Resource)
 		beehivecontext.Send(modules.RouterModuleName, *message)
+
+	case message.GetOperation() == taskutil.TaskPrePull ||
+		message.GetOperation() == taskutil.TaskUpgrade:
+		beehivecontext.SendToGroup(modules.TaskManagerModuleGroup, *message)
+
+	case message.GetResource() == beehivemodel.ResourceTypeK8sCA:
+		respMsg := beehivemodel.NewMessage(message.GetID()).FillBody(string(client.GetK8sCA())).
+			BuildRouter(modules.CloudHubModuleName, "resource", fmt.Sprintf("node/%s/%s", info.NodeID, message.GetResource()), beehivemodel.ResponseOperation)
+		beehivecontext.Send(modules.CloudHubModuleName, *respMsg)
 
 	default:
 		err := md.PubToController(info, message)
@@ -219,7 +234,7 @@ func (md *messageDispatcher) enqueueAckMessage(nodeID string, msg *beehivemodel.
 
 	messageKey, err := common.AckMessageKeyFunc(msg)
 	if err != nil {
-		klog.Errorf("fail to get key for message: %s", msg.String())
+		klog.Errorf("fail to get key for message: %s, err: %v", msg.String(), err)
 		return
 	}
 
@@ -245,7 +260,6 @@ func (md *messageDispatcher) enqueueAckMessage(nodeID string, msg *beehivemodel.
 	item, exist, _ := nodeStore.GetByKey(messageKey)
 	if exist {
 		msgInStore := item.(*beehivemodel.Message)
-
 		if isDeleteMessage(msgInStore) ||
 			synccontroller.CompareResourceVersion(msg.GetResourceVersion(), msgInStore.GetResourceVersion()) <= 0 {
 			// If the message resource version is older than the message in store or the operation
@@ -256,13 +270,87 @@ func (md *messageDispatcher) enqueueAckMessage(nodeID string, msg *beehivemodel.
 		return
 	}
 
-	// If the message doesn't exist in the store, then compare it with the version stored in the objectSync.
+	// If the message doesn't exist in the store, then compare it with
+	// the version stored in the objectSync or clusterObjectSync.
+	resourceNamespace, _ := messagelayer.GetNamespace(*msg)
+	if resourceNamespace == v2.NullNamespace {
+		shouldEnqueue = md.enqueueNonNamespacedResource(nodeID, msg)
+	} else {
+		shouldEnqueue = md.enqueueNamespacedResource(nodeID, msg)
+	}
+}
+
+func (md *messageDispatcher) enqueueNonNamespacedResource(nodeID string, msg *beehivemodel.Message) bool {
+	resourceName, _ := messagelayer.GetResourceName(*msg)
+	resourceUID, err := common.GetMessageUID(*msg)
+	if err != nil {
+		klog.Errorf("fail to get message UID for message: %s", msg.Header.ID)
+		return false
+	}
+
+	clusterObjectSyncName := synccontroller.BuildObjectSyncName(nodeID, resourceUID)
+	clusterObjectSync, err := md.clusterObjectSyncLister.Get(clusterObjectSyncName)
+
+	switch {
+	case err == nil && clusterObjectSync.Status.ObjectResourceVersion != "":
+		if synccontroller.CompareResourceVersion(msg.GetResourceVersion(), clusterObjectSync.Status.ObjectResourceVersion) > 0 {
+			return true
+		}
+
+	case err != nil && apierrors.IsNotFound(err):
+		// If clusterObjectSync is not exist, this indicates that the message is coming
+		// for the first time, We create clusterObjectSync for the resource directly.
+
+		clusterObjectSync := &v1alpha1.ClusterObjectSync{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: clusterObjectSyncName,
+			},
+			Spec: v1alpha1.ObjectSyncSpec{
+				ObjectAPIVersion: util.GetMessageAPIVersion(msg),
+				ObjectKind:       util.GetMessageResourceType(msg),
+				ObjectName:       resourceName,
+			},
+		}
+
+		clusterObjectSync, err := md.reliableClient.
+			ReliablesyncsV1alpha1().
+			ClusterObjectSyncs().
+			Create(context.Background(), clusterObjectSync, metav1.CreateOptions{})
+		if err != nil {
+			klog.ErrorS(err, "Failed to create clusterObjectSync",
+				"clusterObjectSyncName", clusterObjectSyncName,
+				"resourceName", resourceName)
+			return false
+		}
+
+		clusterObjectSync.Status.ObjectResourceVersion = "0"
+		_, err = md.reliableClient.
+			ReliablesyncsV1alpha1().
+			ClusterObjectSyncs().
+			UpdateStatus(context.Background(), clusterObjectSync, metav1.UpdateOptions{})
+		if err != nil {
+			klog.ErrorS(err, "Failed to update clusterObjectSync",
+				"clusterObjectSyncName", clusterObjectSyncName,
+				"resourceName", resourceName)
+			return false
+		}
+
+		return true
+
+	case err != nil:
+		klog.Errorf("failed to get clusterObjectSync %s: %v", clusterObjectSyncName, err)
+	}
+
+	return false
+}
+
+func (md *messageDispatcher) enqueueNamespacedResource(nodeID string, msg *beehivemodel.Message) bool {
 	resourceNamespace, _ := messagelayer.GetNamespace(*msg)
 	resourceName, _ := messagelayer.GetResourceName(*msg)
 	resourceUID, err := common.GetMessageUID(*msg)
 	if err != nil {
 		klog.Errorf("fail to get message UID for message: %s", msg.Header.ID)
-		return
+		return false
 	}
 
 	objectSyncName := synccontroller.BuildObjectSyncName(nodeID, resourceUID)
@@ -271,13 +359,13 @@ func (md *messageDispatcher) enqueueAckMessage(nodeID string, msg *beehivemodel.
 	switch {
 	case err == nil && objectSync.Status.ObjectResourceVersion != "":
 		if synccontroller.CompareResourceVersion(msg.GetResourceVersion(), objectSync.Status.ObjectResourceVersion) > 0 {
-			shouldEnqueue = true
-			return
+			return true
 		}
 
 	case err != nil && apierrors.IsNotFound(err):
 		// If objectSync is not exist, this indicates that the message is coming
 		// for the first time, We create objectSync for the resource directly.
+
 		objectSync := &v1alpha1.ObjectSync{
 			ObjectMeta: metav1.ObjectMeta{
 				Name:      objectSyncName,
@@ -299,7 +387,7 @@ func (md *messageDispatcher) enqueueAckMessage(nodeID string, msg *beehivemodel.
 				"objectSyncName", objectSyncName,
 				"resourceNamespace", resourceNamespace,
 				"resourceName", resourceName)
-			return
+			return false
 		}
 
 		objectSyncStatus.Status.ObjectResourceVersion = "0"
@@ -312,14 +400,16 @@ func (md *messageDispatcher) enqueueAckMessage(nodeID string, msg *beehivemodel.
 				"objectSyncName", objectSyncName,
 				"resourceNamespace", resourceNamespace,
 				"resourceName", resourceName)
+			return false
 		}
 
-		// enqueue message that comes for the first time
-		shouldEnqueue = true
+		return true
 
 	case err != nil:
 		klog.Errorf("failed to get ObjectSync %s/%s: %v", resourceNamespace, objectSyncName, err)
 	}
+
+	return false
 }
 
 func isDeleteMessage(msg *beehivemodel.Message) bool {
@@ -362,17 +452,26 @@ func noAckRequired(msg *beehivemodel.Message) bool {
 		return true
 	case strings.Contains(msgResource, beehivemodel.ResourceTypeServiceAccountToken):
 		return true
+	case strings.Contains(msgResource, beehivemodel.ResourceTypeK8sCA):
+		return true
 	case isVolumeOperation(msg.GetOperation()):
 		return true
 	case msg.Router.Operation == metaserver.ApplicationResp:
 		return true
 	case msg.GetGroup() == modules.UserGroup:
 		return true
+	case msg.GetSource() == modules.TaskManagerModuleName:
+		return true
 	case msg.GetSource() == modules.NodeUpgradeJobControllerModuleName:
 		return true
 	case msg.GetOperation() == beehivemodel.ResponseOperation:
 		content, ok := msg.Content.(string)
 		if ok && content == commonconst.MessageSuccessfulContent {
+			return true
+		}
+		// `error message` is not required to ack
+		_, ok = msg.Content.(error)
+		if ok {
 			return true
 		}
 		fallthrough
@@ -383,7 +482,9 @@ func noAckRequired(msg *beehivemodel.Message) bool {
 				resourceType == beehivemodel.ResourceTypeLease ||
 				resourceType == beehivemodel.ResourceTypeNodePatch ||
 				resourceType == beehivemodel.ResourceTypePodPatch ||
-				resourceType == beehivemodel.ResourceTypePodStatus {
+				resourceType == beehivemodel.ResourceTypePodStatus ||
+				resourceType == beehivemodel.ResourceTypeCSR ||
+				(resourceType == beehivemodel.ResourceTypePod && msg.GetOperation() == beehivemodel.ResponseOperation) {
 				return true
 			}
 		}

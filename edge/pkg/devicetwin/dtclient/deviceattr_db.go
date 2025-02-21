@@ -1,13 +1,15 @@
 package dtclient
 
 import (
-	"github.com/astaxie/beego/orm"
+	"context"
+
+	"github.com/beego/beego/v2/client/orm"
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 )
 
-//DeviceAttr the struct of device attributes
+// DeviceAttr the struct of device attributes
 type DeviceAttr struct {
 	ID          int64  `orm:"column(id);size(64);auto;pk"`
 	DeviceID    string `orm:"column(deviceid); null; type(text)"`
@@ -19,32 +21,58 @@ type DeviceAttr struct {
 	Metadata    string `orm:"column(metadata);null;type(text)"`
 }
 
-//SaveDeviceAttr save device attributes
-func SaveDeviceAttr(obm orm.Ormer, doc *DeviceAttr) error {
-	num, err := obm.Insert(doc)
-	klog.V(4).Infof("Insert affected Num: %d, %s", num, err)
-	return err
-}
-
-//DeleteDeviceAttrByDeviceID delete device attr
-func DeleteDeviceAttrByDeviceID(obm orm.Ormer, deviceID string) error {
-	num, err := obm.QueryTable(DeviceAttrTableName).Filter("deviceid", deviceID).Delete()
+// SaveDeviceAttr save device attributes
+func SaveDeviceAttr(o orm.Ormer, doc *DeviceAttr) error {
+	err := o.DoTx(func(ctx context.Context, txOrm orm.TxOrmer) error {
+		// insert data
+		// Using txOrm to execute SQL
+		_, e := txOrm.Insert(doc)
+		// if e != nil the transaction will be rollback
+		// or it will be committed
+		return e
+	})
 	if err != nil {
-		klog.Errorf("Something wrong when deleting data: %v", err)
+		klog.Errorf("Something wrong when insert DeviceAttr data: %v", err)
 		return err
 	}
-	klog.V(4).Infof("Delete affected Num: %d", num)
+	klog.V(4).Info("insert DeviceAttr data successfully")
 	return nil
 }
 
-//DeleteDeviceAttr delete device attr
-func DeleteDeviceAttr(obm orm.Ormer, deviceID string, name string) error {
-	num, err := obm.QueryTable(DeviceAttrTableName).Filter("deviceid", deviceID).Filter("name", name).Delete()
+// DeleteDeviceAttrByDeviceID delete device attr
+func DeleteDeviceAttrByDeviceID(o orm.Ormer, deviceID string) error {
+	err := o.DoTx(func(ctx context.Context, txOrm orm.TxOrmer) error {
+		// delete data
+		// Using txOrm to execute SQL
+		_, e := txOrm.QueryTable(DeviceAttrTableName).Filter("deviceid", deviceID).Delete()
+		// if e != nil the transaction will be rollback
+		// or it will be committed
+		return e
+	})
+
+	if err != nil {
+		klog.Errorf("Something wrong when deleting Device data: %v", err)
+		return err
+	}
+	klog.V(4).Info("Delete Device data successfully")
+	return nil
+}
+
+// DeleteDeviceAttr delete device attr
+func DeleteDeviceAttr(o orm.Ormer, deviceID string, name string) error {
+	err := o.DoTx(func(ctx context.Context, txOrm orm.TxOrmer) error {
+		// delete data
+		// Using txOrm to execute SQL
+		_, e := txOrm.QueryTable(DeviceAttrTableName).Filter("deviceid", deviceID).Filter("name", name).Delete()
+		// if e != nil the transaction will be rollback
+		// or it will be committed
+		return e
+	})
 	if err != nil {
 		klog.Errorf("Something wrong when deleting data: %v", err)
 		return err
 	}
-	klog.V(4).Infof("Delete affected Num: %d", num)
+	klog.V(4).Infof("Delete Device attr successfully")
 	return nil
 }
 
@@ -56,8 +84,8 @@ func UpdateDeviceAttrField(deviceID string, name string, col string, value inter
 }
 
 // UpdateDeviceAttrFields update special fields
-func UpdateDeviceAttrFields(obm orm.Ormer, deviceID string, name string, cols map[string]interface{}) error {
-	num, err := obm.QueryTable(DeviceAttrTableName).Filter("deviceid", deviceID).Filter("name", name).Update(cols)
+func UpdateDeviceAttrFields(o orm.Ormer, deviceID string, name string, cols map[string]interface{}) error {
+	num, err := o.QueryTable(DeviceAttrTableName).Filter("deviceid", deviceID).Filter("name", name).Update(cols)
 	klog.V(4).Infof("Update affected Num: %d, %s", num, err)
 	return err
 }
@@ -72,20 +100,20 @@ func QueryDeviceAttr(key string, condition string) (*[]DeviceAttr, error) {
 	return attrs, nil
 }
 
-//DeviceDelete the struct for deleting device
+// DeviceDelete the struct for deleting device
 type DeviceDelete struct {
 	DeviceID string
 	Name     string
 }
 
-//DeviceAttrUpdate the struct for updating device attr
+// DeviceAttrUpdate the struct for updating device attr
 type DeviceAttrUpdate struct {
 	DeviceID string
 	Name     string
 	Cols     map[string]interface{}
 }
 
-//UpdateDeviceAttrMulti update device attr multi
+// UpdateDeviceAttrMulti update device attr multi
 func UpdateDeviceAttrMulti(updates []DeviceAttrUpdate) error {
 	var err error
 	for _, update := range updates {
@@ -97,25 +125,10 @@ func UpdateDeviceAttrMulti(updates []DeviceAttrUpdate) error {
 	return nil
 }
 
-//DeviceAttrTrans transaction of device attr
+// DeviceAttrTrans transaction of device attr
 func DeviceAttrTrans(adds []DeviceAttr, deletes []DeviceDelete, updates []DeviceAttrUpdate) error {
 	obm := dbm.DefaultOrmFunc()
-	err := obm.Begin()
-	if err != nil {
-		klog.Errorf("failed to begin transaction: %v", err)
-		return err
-	}
-
-	defer func() {
-		if err != nil {
-			dbm.RollbackTransaction(obm)
-		} else {
-			err = obm.Commit()
-			if err != nil {
-				klog.Errorf("failed to commit transaction: %v", err)
-			}
-		}
-	}()
+	var err error
 
 	for _, add := range adds {
 		err = SaveDeviceAttr(obm, &add)

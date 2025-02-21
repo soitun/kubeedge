@@ -21,6 +21,7 @@ import (
 	"k8s.io/client-go/dynamic/dynamicinformer"
 	"k8s.io/klog/v2"
 
+	configv1alpha1 "github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
@@ -30,7 +31,6 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/config"
 	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/filter/defaultmaster"
 	"github.com/kubeedge/kubeedge/cloud/pkg/dynamiccontroller/filter/endpointresource"
-	configv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 // DynamicController use dynamicSharedInformer to dispatch messages
@@ -46,8 +46,8 @@ var (
 	dynamicController *DynamicController
 )
 
-func Register(dc *configv1alpha1.DynamicController) {
-	config.InitConfigure(dc)
+func Register(dc *configv1alpha1.DynamicController, enableAuthorization bool) {
+	config.InitConfigure(dc, enableAuthorization)
 	dynamicController = newDynamicController(dc.Enable)
 	core.Register(dynamicController)
 }
@@ -85,7 +85,7 @@ func newDynamicController(enable bool) *DynamicController {
 	var dctl = &DynamicController{
 		enable:                       enable,
 		messageLayer:                 messagelayer.DynamicControllerMessageLayer(),
-		dynamicSharedInformerFactory: informers.GetInformersManager().GetDynamicSharedInformerFactory(),
+		dynamicSharedInformerFactory: informers.GetInformersManager().GetDynamicInformerFactory(),
 	}
 	dctl.applicationCenter = application.NewApplicationCenter(dctl.dynamicSharedInformerFactory)
 	dctl.applicationCenter.ForResource(v1.SchemeGroupVersion.WithResource("nodes"))
@@ -106,6 +106,8 @@ func (dctl *DynamicController) receiveMessage() {
 			klog.Warningf("Receive message failed, %s", err)
 			continue
 		}
+
+		klog.V(4).Infof("[DynamicController] receive, msg: %+v", msg)
 		dctl.applicationCenter.Process(msg)
 	}
 }

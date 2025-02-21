@@ -29,10 +29,10 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/util"
 	"github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
-	"github.com/kubeedge/viaduct/pkg/api"
-	"github.com/kubeedge/viaduct/pkg/conn"
-	"github.com/kubeedge/viaduct/pkg/mux"
-	"github.com/kubeedge/viaduct/pkg/server"
+	"github.com/kubeedge/kubeedge/pkg/viaduct/pkg/api"
+	"github.com/kubeedge/kubeedge/pkg/viaduct/pkg/conn"
+	"github.com/kubeedge/kubeedge/pkg/viaduct/pkg/mux"
+	"github.com/kubeedge/kubeedge/pkg/viaduct/pkg/server"
 )
 
 func handleServer(container *mux.MessageContainer, writer mux.ResponseWriter) {
@@ -40,7 +40,7 @@ func handleServer(container *mux.MessageContainer, writer mux.ResponseWriter) {
 	writer.WriteResponse(&model.Message{}, container.Message.GetContent())
 }
 
-func connNotify(conn conn.Connection) {
+func connNotify(conn.Connection) {
 	klog.Info("receive a connection")
 }
 

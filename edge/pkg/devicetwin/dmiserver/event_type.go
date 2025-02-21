@@ -22,14 +22,16 @@ import (
 	"github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/types"
 )
 
-const (
-	PropertyType = "propertyType"
-)
-
 // DeviceTwinUpdate the structure of device twin update.
 type DeviceTwinUpdate struct {
 	types.BaseMessage
 	Twin map[string]*types.MsgTwin `json:"twin"`
+}
+
+// DeviceStateUpdate the structure of device state update.
+type DeviceStateUpdate struct {
+	types.BaseMessage
+	State string
 }
 
 // getTimestamp get current timestamp.

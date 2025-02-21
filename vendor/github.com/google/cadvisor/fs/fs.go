@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+//go:build linux
 // +build linux
 
 // Provides Filesystem Stats
@@ -20,7 +21,6 @@ package fs
 import (
 	"bufio"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"os/exec"
 	"path"
@@ -30,10 +30,11 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/google/cadvisor/devicemapper"
-	"github.com/google/cadvisor/utils"
 	zfs "github.com/mistifyio/go-zfs"
 	mount "github.com/moby/sys/mountinfo"
+
+	"github.com/google/cadvisor/devicemapper"
+	"github.com/google/cadvisor/utils"
 
 	"k8s.io/klog/v2"
 )
@@ -42,6 +43,7 @@ const (
 	LabelSystemRoot          = "root"
 	LabelDockerImages        = "docker-images"
 	LabelCrioImages          = "crio-images"
+	LabelCrioContainers      = "crio-containers"
 	DriverStatusPoolName     = "Pool Name"
 	DriverStatusDataLoopFile = "Data loop file"
 )
@@ -144,7 +146,7 @@ func getFsUUIDToDeviceNameMap() (map[string]string, error) {
 		return make(map[string]string), nil
 	}
 
-	files, err := ioutil.ReadDir(dir)
+	files, err := os.ReadDir(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -279,27 +281,52 @@ func (i *RealFsInfo) addSystemRootLabel(mounts []*mount.Info) {
 
 // addDockerImagesLabel attempts to determine which device contains the mount for docker images.
 func (i *RealFsInfo) addDockerImagesLabel(context Context, mounts []*mount.Info) {
-	dockerDev, dockerPartition, err := i.getDockerDeviceMapperInfo(context.Docker)
-	if err != nil {
-		klog.Warningf("Could not get Docker devicemapper device: %v", err)
-	}
-	if len(dockerDev) > 0 && dockerPartition != nil {
-		i.partitions[dockerDev] = *dockerPartition
-		i.labels[LabelDockerImages] = dockerDev
-	} else {
-		i.updateContainerImagesPath(LabelDockerImages, mounts, getDockerImagePaths(context))
+	if context.Docker.Driver != "" {
+		dockerDev, dockerPartition, err := i.getDockerDeviceMapperInfo(context.Docker)
+		if err != nil {
+			klog.Warningf("Could not get Docker devicemapper device: %v", err)
+		}
+		if len(dockerDev) > 0 && dockerPartition != nil {
+			i.partitions[dockerDev] = *dockerPartition
+			i.labels[LabelDockerImages] = dockerDev
+		} else {
+			i.updateContainerImagesPath(LabelDockerImages, mounts, getDockerImagePaths(context))
+		}
 	}
 }
 
 func (i *RealFsInfo) addCrioImagesLabel(context Context, mounts []*mount.Info) {
+	labelCrioImageOrContainers := LabelCrioContainers
+	// If imagestore is not specified, let's fall back to the original case.
+	// Everything will be stored in crio-images
+	if context.Crio.ImageStore == "" {
+		labelCrioImageOrContainers = LabelCrioImages
+	}
 	if context.Crio.Root != "" {
 		crioPath := context.Crio.Root
 		crioImagePaths := map[string]struct{}{
 			"/": {},
 		}
-		for _, dir := range []string{"devicemapper", "btrfs", "aufs", "overlay", "zfs"} {
-			crioImagePaths[path.Join(crioPath, dir+"-images")] = struct{}{}
+		imageOrContainerPath := context.Crio.Driver + "-containers"
+		if context.Crio.ImageStore == "" {
+			// If ImageStore is not specified then we will assume ImageFs is complete separate.
+			// No need to split the image store.
+			imageOrContainerPath = context.Crio.Driver + "-images"
+
 		}
+		crioImagePaths[path.Join(crioPath, imageOrContainerPath)] = struct{}{}
+		for crioPath != "/" && crioPath != "." {
+			crioImagePaths[crioPath] = struct{}{}
+			crioPath = filepath.Dir(crioPath)
+		}
+		i.updateContainerImagesPath(labelCrioImageOrContainers, mounts, crioImagePaths)
+	}
+	if context.Crio.ImageStore != "" {
+		crioPath := context.Crio.ImageStore
+		crioImagePaths := map[string]struct{}{
+			"/": {},
+		}
+		crioImagePaths[path.Join(crioPath, context.Crio.Driver+"-images")] = struct{}{}
 		for crioPath != "/" && crioPath != "." {
 			crioImagePaths[crioPath] = struct{}{}
 			crioPath = filepath.Dir(crioPath)
@@ -383,6 +410,7 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 	if err != nil {
 		return nil, err
 	}
+	nfsInfo := make(map[string]Fs, 0)
 	for device, partition := range i.partitions {
 		_, hasMount := mountSet[partition.mountpoint]
 		_, hasDevice := deviceSet[device]
@@ -391,7 +419,11 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				err error
 				fs  Fs
 			)
-			switch partition.fsType {
+			fsType := partition.fsType
+			if strings.HasPrefix(partition.fsType, "nfs") {
+				fsType = "nfs"
+			}
+			switch fsType {
 			case DeviceMapper.String():
 				fs.Capacity, fs.Free, fs.Available, err = getDMStats(device, partition.blockSize)
 				klog.V(5).Infof("got devicemapper fs capacity stats: capacity: %v free: %v available: %v:", fs.Capacity, fs.Free, fs.Available)
@@ -404,6 +436,22 @@ func (i *RealFsInfo) GetFsInfoForPath(mountSet map[string]struct{}) ([]Fs, error
 				}
 				// if /dev/zfs is not present default to VFS
 				fallthrough
+			case NFS.String():
+				devId := fmt.Sprintf("%d:%d", partition.major, partition.minor)
+				if v, ok := nfsInfo[devId]; ok {
+					fs = v
+					break
+				}
+				var inodes, inodesFree uint64
+				fs.Capacity, fs.Free, fs.Available, inodes, inodesFree, err = getVfsStats(partition.mountpoint)
+				if err != nil {
+					klog.V(4).Infof("the file system type is %s, partition mountpoint does not exist: %v, error: %v", partition.fsType, partition.mountpoint, err)
+					break
+				}
+				fs.Inodes = &inodes
+				fs.InodesFree = &inodesFree
+				fs.Type = VFS
+				nfsInfo[devId] = fs
 			default:
 				var inodes, inodesFree uint64
 				if utils.FileExists(partition.mountpoint) {
@@ -582,15 +630,20 @@ func (i *RealFsInfo) GetDirFsDevice(dir string) (*DeviceInfo, error) {
 	}
 
 	mnt, found := i.mountInfoFromDir(dir)
-	if found && mnt.FSType == "btrfs" && mnt.Major == 0 && strings.HasPrefix(mnt.Source, "/dev/") {
-		major, minor, err := getBtrfsMajorMinorIds(mnt)
-		if err != nil {
-			klog.Warningf("%s", err)
-		} else {
-			return &DeviceInfo{mnt.Source, uint(major), uint(minor)}, nil
+	if found && strings.HasPrefix(mnt.Source, "/dev/") {
+		major, minor := mnt.Major, mnt.Minor
+
+		if mnt.FSType == "btrfs" && major == 0 {
+			major, minor, err = getBtrfsMajorMinorIds(mnt)
+			if err != nil {
+				klog.Warningf("Unable to get btrfs mountpoint IDs: %v", err)
+			}
 		}
+
+		return &DeviceInfo{mnt.Source, uint(major), uint(minor)}, nil
 	}
-	return nil, fmt.Errorf("could not find device with major: %d, minor: %d in cached partitions map", major, minor)
+
+	return nil, fmt.Errorf("with major: %d, minor: %d: %w", major, minor, ErrDeviceNotInPartitionsMap)
 }
 
 func GetDirUsage(dir string) (UsageInfo, error) {
@@ -607,7 +660,7 @@ func GetDirUsage(dir string) (UsageInfo, error) {
 
 	rootStat, ok := rootInfo.Sys().(*syscall.Stat_t)
 	if !ok {
-		return usage, fmt.Errorf("unsuported fileinfo for getting inode usage of %q", dir)
+		return usage, fmt.Errorf("unsupported fileinfo for getting inode usage of %q", dir)
 	}
 
 	rootDevID := rootStat.Dev

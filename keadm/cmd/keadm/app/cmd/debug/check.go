@@ -83,7 +83,6 @@ func NewSubEdgeCheck(object CheckObject) *cobra.Command {
 		cmd.Flags().StringVarP(&co.Domain, "domain", "d", co.Domain, "specify test domain")
 		cmd.Flags().StringVarP(&co.IP, "ip", "i", co.IP, "specify test ip")
 		cmd.Flags().StringVarP(&co.CloudHubServer, "cloud-hub-server", "s", co.CloudHubServer, "specify cloudhub server")
-		cmd.Flags().StringVarP(&co.Runtime, "runtime", "r", co.Runtime, "specify test runtime")
 		cmd.Flags().StringVarP(&co.DNSIP, "dns-ip", "D", co.DNSIP, "specify test dns ip")
 		cmd.Flags().StringVarP(&co.Config, common.EdgecoreConfig, "c", co.Config,
 			fmt.Sprintf("Specify configuration file, default is %s", common.EdgecoreConfigPath))
@@ -95,8 +94,6 @@ func NewSubEdgeCheck(object CheckObject) *cobra.Command {
 		cmd.Flags().StringVarP(&co.CloudHubServer, "cloud-hub-server", "s", co.CloudHubServer, "specify cloudhub server")
 		cmd.Flags().StringVarP(&co.Config, common.EdgecoreConfig, "c", co.Config,
 			fmt.Sprintf("Specify configuration file, default is %s", common.EdgecoreConfigPath))
-	case common.ArgCheckRuntime:
-		cmd.Flags().StringVarP(&co.Runtime, "runtime", "r", co.Runtime, "specify test runtime")
 	}
 
 	return cmd
@@ -105,7 +102,6 @@ func NewSubEdgeCheck(object CheckObject) *cobra.Command {
 // NewCheckOptions returns check options
 func NewCheckOptions() *common.CheckOptions {
 	co := &common.CheckOptions{}
-	co.Runtime = common.DefaultRuntime
 	co.Domain = "www.github.com"
 	co.Timeout = 1
 	return co
@@ -133,7 +129,7 @@ func (co *CheckObject) ExecuteCheck(use string, ob *common.CheckOptions) {
 	case common.ArgCheckNetwork:
 		err = CheckNetWork(ob.IP, ob.Timeout, ob.CloudHubServer, ob.EdgecoreServer, ob.Config)
 	case common.ArgCheckRuntime:
-		err = CheckRuntime(ob.Runtime)
+		err = CheckRuntime()
 	case common.ArgCheckPID:
 		err = CheckPid()
 	}
@@ -177,7 +173,7 @@ func CheckAll(ob *common.CheckOptions) error {
 		return err
 	}
 
-	err = CheckRuntime(ob.Runtime)
+	err = CheckRuntime()
 	if err != nil {
 		return err
 	}
@@ -345,20 +341,9 @@ func CheckHTTP(url string) error {
 	return nil
 }
 
-func CheckRuntime(runtime string) error {
-	if runtime == common.DefaultRuntime {
-		result, err := util.ExecShellFilter(common.CmdGetStatusDocker)
-		if err != nil {
-			return err
-		}
-		if result != "active" {
-			return fmt.Errorf("docker is not running: %s", result)
-		}
-		fmt.Printf("docker is running\n")
-		return nil
-	}
-	return fmt.Errorf("now only support docker: %s", runtime)
-	// TODO
+func CheckRuntime() error {
+	// TODO: check runtime status
+	return nil
 }
 
 func CheckPid() error {

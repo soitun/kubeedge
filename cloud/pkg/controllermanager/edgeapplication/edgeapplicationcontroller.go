@@ -7,6 +7,7 @@ import (
 	"sort"
 
 	jsonpatch "github.com/evanphx/json-patch"
+	nodev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -24,12 +25,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/handler"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	appsv1alpha1 "github.com/kubeedge/api/apis/apps/v1alpha1"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/overridemanager"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/statusmanager"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/utils"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/nodegroup"
-	appsv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/apps/v1alpha1"
 )
 
 // Controller is to sync EdgeApplication.
@@ -90,7 +91,8 @@ func (c *Controller) SetupWithManager(mgr controllerruntime.Manager) error {
 	}
 	return controllerruntime.NewControllerManagedBy(mgr).
 		For(&appsv1alpha1.EdgeApplication{}).
-		Watches(&source.Channel{Source: c.ReconcileTriggerChan}, &handler.EnqueueRequestForObject{}).
+		Watches(&nodev1.Node{}, handler.EnqueueRequestsFromMapFunc(c.nodeMapFunc)).
+		WatchesRawSource(source.Channel(c.ReconcileTriggerChan, &handler.EnqueueRequestForObject{})).
 		Complete(c)
 }
 
@@ -128,15 +130,15 @@ func (c *Controller) syncEdgeApplication(ctx context.Context, edgeApp *appsv1alp
 		// If one succeeded and another failed, the status of edgeApp will only contain the successful
 		// one, and have no status about the failed one.
 		for _, info := range overriderInfos {
-			copy := tmpl.DeepCopy()
-			klog.V(4).Infof("override obj %s/%s of gvk %s", copy.GetNamespace(), copy.GetName(), copy.GroupVersionKind())
-			if err := c.Overrider.ApplyOverrides(copy, info); err != nil {
+			tmplCopy := tmpl.DeepCopy()
+			klog.V(4).Infof("override obj %s/%s of gvk %s, for nodegroup %s", tmplCopy.GetNamespace(), tmplCopy.GetName(), tmplCopy.GroupVersionKind(), info.TargetNodeGroup)
+			if err := c.Overrider.ApplyOverrides(tmplCopy, info); err != nil {
 				klog.Errorf("failed to apply override of nodegroup %s to obj %s/%s of gvk %s, %v",
-					info.TargetNodeGroup, copy.GetNamespace(), copy.GetName(), copy.GroupVersionKind(), err)
+					info.TargetNodeGroup, tmplCopy.GetNamespace(), tmplCopy.GetName(), tmplCopy.GroupVersionKind(), err)
 				errs = append(errs, err)
 				continue
 			}
-			modifiedTmplInfos = append(modifiedTmplInfos, &utils.TemplateInfo{Ordinal: tmplInfo.Ordinal, Template: copy})
+			modifiedTmplInfos = append(modifiedTmplInfos, &utils.TemplateInfo{Ordinal: tmplInfo.Ordinal, Template: tmplCopy})
 		}
 	}
 
@@ -246,7 +248,7 @@ func (c *Controller) updateStatus(ctx context.Context, edgeApp *appsv1alpha1.Edg
 
 	// ensure each template have its corresponding status
 	// Because of error, some entries in edgeApp.Spec.WorkloadTemplate.Manifests cannot
-	// be parsed as an template object or cannot applied override to it. These entries should
+	// be parsed as a template object or cannot apply override to it. These entries should
 	// also have its status, though they are not elements of passed-in argument tmplInfos.
 	for ordinal := 0; ordinal < len(edgeApp.Spec.WorkloadTemplate.Manifests); ordinal++ {
 		find := false
@@ -279,8 +281,9 @@ func (c *Controller) updateStatus(ctx context.Context, edgeApp *appsv1alpha1.Edg
 		return nil
 	}
 
-	edgeApp.Status.WorkloadStatus = newStatus
-	return c.Client.Status().Update(ctx, edgeApp)
+	newEdgeApp := edgeApp.DeepCopy()
+	newEdgeApp.Status.WorkloadStatus = newStatus
+	return c.Client.Status().Patch(ctx, newEdgeApp, client.MergeFrom(edgeApp))
 }
 
 func (c *Controller) ifObjExists(ctx context.Context, obj *unstructured.Unstructured) (bool, *unstructured.Unstructured, error) {
@@ -327,6 +330,32 @@ func (c *Controller) updateTemplate(ctx context.Context, tmpl *unstructured.Unst
 			curObj.GetNamespace(), curObj.GetName(), curObj.GroupVersionKind(), err)
 	}
 	return nil
+}
+
+func (c *Controller) nodeMapFunc(_ context.Context, obj client.Object) []controllerruntime.Request {
+	node := obj.(*nodev1.Node)
+	edgeappList := &appsv1alpha1.EdgeApplicationList{}
+
+	// list all EdgeApplications
+	if err := c.Client.List(context.TODO(), edgeappList); err != nil {
+		klog.Errorf("failed to list all edge applications, %s", err)
+		return nil
+	}
+
+	// filter EdgeApplications that select the node by label selector
+	matches := []controllerruntime.Request{}
+	for _, edgeapp := range edgeappList.Items {
+		if utils.IsNodeSelected(edgeapp, *node) { // Using the function for node label matching
+			matches = append(matches, controllerruntime.Request{
+				NamespacedName: types.NamespacedName{
+					Namespace: edgeapp.Namespace,
+					Name:      edgeapp.Name,
+				},
+			})
+		}
+	}
+	// reconcile the EdgeApplications that are assigned to the node
+	return matches
 }
 
 // applyTemplate will apply the passed-in template
@@ -407,8 +436,9 @@ func (c *Controller) getLastContainedResourceInfos(edgeApp *appsv1alpha1.EdgeApp
 // addOrUpdateLastContainedResourcesAnnotation will add the ContainedResourcesAnnotation to the EdgeApplication,
 // if the annotation has already existed, it will be updated it according to resources in manifests.
 func (c *Controller) addOrUpdateLastContainedResourcesAnnotation(ctx context.Context, edgeApp *appsv1alpha1.EdgeApplication, tmplInfos []*utils.TemplateInfo) error {
-	if edgeApp.Annotations == nil {
-		edgeApp.Annotations = make(map[string]string)
+	newEdgeApp := edgeApp.DeepCopy()
+	if newEdgeApp.Annotations == nil {
+		newEdgeApp.Annotations = make(map[string]string)
 	}
 
 	resourceInfos := make([]*utils.ResourceInfo, len(tmplInfos))
@@ -422,13 +452,13 @@ func (c *Controller) addOrUpdateLastContainedResourcesAnnotation(ctx context.Con
 		return fmt.Errorf("failed to marshal infos %v, %v", resourceInfos, err)
 	}
 
-	oldAnno := edgeApp.Annotations[constants.LastContainedResourcesAnnotationKey]
+	oldAnno := newEdgeApp.Annotations[constants.LastContainedResourcesAnnotationKey]
 	if oldAnno == string(infosJSON) {
-		klog.V(4).Infof("skip update last-applied-resources annotation of edgeapp %s/%s for same value", edgeApp.Namespace, edgeApp.Name)
+		klog.V(4).Infof("skip update last-applied-resources annotation of edgeapp %s/%s for same value", newEdgeApp.Namespace, newEdgeApp.Name)
 		return nil
 	}
-	edgeApp.Annotations[constants.LastContainedResourcesAnnotationKey] = string(infosJSON)
-	return c.Client.Update(ctx, edgeApp)
+	newEdgeApp.Annotations[constants.LastContainedResourcesAnnotationKey] = string(infosJSON)
+	return c.Client.Patch(ctx, newEdgeApp, client.MergeFrom(edgeApp))
 }
 
 func (c *Controller) update(ctx context.Context, tmpl *unstructured.Unstructured, curObj *unstructured.Unstructured) error {
@@ -530,7 +560,7 @@ func setOwnerReference(obj *unstructured.Unstructured, edgeApp *appsv1alpha1.Edg
 	obj.SetOwnerReferences(ownerReferences)
 }
 
-// isSameAsLastApplied will check if the curObj has the same specified fileds as objInEdgeApp.
+// isSameAsLastApplied will check if the curObj has the same specified fields as objInEdgeApp.
 // It assumes that fields of the obj in cluster are same as the value of last-applied-template annotation.
 func isSameAsLastApplied(objInEdgeApp *unstructured.Unstructured, curObj runtime.Object) (bool, error) {
 	accessor := meta.NewAccessor()

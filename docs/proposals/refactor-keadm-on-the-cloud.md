@@ -60,7 +60,7 @@ spec:
         memory: 512Mi
     modules:
       cloudHub:
-        advertiseAddress:   # Causion!: Leave this entry to empty will cause CloudCore to exit abnormally once KubeEdge is enabled. 
+        advertiseAddress:   # Caution!: Leave this entry to empty will cause CloudCore to exit abnormally once KubeEdge is enabled. 
           - ""              # At least a public IP Address or an IP which can be accessed by edge nodes must be provided!           
         nodeLimit: "1000"
         websocket:
@@ -227,7 +227,7 @@ Allow appending file paths of manifests to keadm, separated by commas
 
 #### --dry-run
 
-> print the generated k8s resources on the stdout, not actual excute. Always use in debug mode.
+> print the generated k8s resources on the stdout, not actual execute. Always use in debug mode.
 
 ### config
 

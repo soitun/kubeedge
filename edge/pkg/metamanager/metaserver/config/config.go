@@ -3,8 +3,8 @@ package config
 import (
 	"sync"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	edgehubconfig "github.com/kubeedge/kubeedge/edge/pkg/edgehub/config"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 var Config Configure
@@ -21,6 +21,9 @@ func InitConfigure(c *v1alpha2.MetaServer) {
 			MetaServer: *c,
 			// so edgehub must register before metamanager
 			NodeName: edgehubconfig.Config.NodeName,
+		}
+		if len(Config.MetaServer.APIAudiences) == 0 && len(Config.MetaServer.ServiceAccountIssuers) != 0 {
+			Config.MetaServer.APIAudiences = Config.MetaServer.ServiceAccountIssuers
 		}
 	})
 }

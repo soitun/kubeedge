@@ -1,9 +1,7 @@
 # KubeEdge
-[![Build Status](https://travis-ci.org/kubeedge/kubeedge.svg?branch=master)](https://travis-ci.org/kubeedge/kubeedge)
 [![Go Report Card](https://goreportcard.com/badge/github.com/kubeedge/kubeedge)](https://goreportcard.com/report/github.com/kubeedge/kubeedge)
 [![LICENSE](https://img.shields.io/github/license/kubeedge/kubeedge.svg?style=flat-square)](/LICENSE)
 [![Releases](https://img.shields.io/github/release/kubeedge/kubeedge/all.svg?style=flat-square)](https://github.com/kubeedge/kubeedge/releases)
-[![Documentation Status](https://readthedocs.org/projects/kubeedge/badge/?version=latest)](https://kubeedge.readthedocs.io/en/latest/?badge=latest)
 [![CII Best Practices](https://bestpractices.coreinfrastructure.org/projects/3018/badge)](https://bestpractices.coreinfrastructure.org/projects/3018)
 
 ![logo](./docs/images/KubeEdge_logo.png)
@@ -16,10 +14,8 @@ KubeEdge 是一个开源的系统，可将本机容器化应用编排和管理�
 随着业务逻辑在边缘端上运行，可以在本地保护和处理大量数据。
 通过在边缘端处理数据，响应速度会显著提高，并且可以更好地保护数据隐私。
 
-KubeEdge 是一个由 [Cloud Native Computing Foundation](https://cncf.io) (CNCF) 托管的孵化级项目，CNCF 对 KubeEdge 的 [孵化公告](https://www.cncf.io/blog/2020/09/16/toc-approves-kubeedge-as-incubating-project/)
+KubeEdge 是一个由 [Cloud Native Computing Foundation](https://cncf.io) (CNCF) 托管的毕业级项目，CNCF 对 KubeEdge 的 [毕业公告](https://www.cncf.io/announcements/2024/10/15/cloud-native-computing-foundation-announces-kubeedge-graduation/)
 
-注意：
-1.8 以前的版本不再支持，请尝试升级到支持版本。
 
 ## 优势
 
@@ -60,12 +56,14 @@ KubeEdge 由云端和边缘端部分构成：
 
 ### Kubernetes 版本兼容
 
-|                        | Kubernetes 1.16 | Kubernetes 1.17 | Kubernetes 1.18 | Kubernetes 1.19 | Kubernetes 1.20 | Kubernetes 1.21 | Kubernetes 1.22 |
-|------------------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|-----------------|
-| KubeEdge 1.10          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| KubeEdge 1.11          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| KubeEdge 1.12          | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
-| KubeEdge HEAD (master) | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               | ✓               |
+|                        | Kubernetes 1.25 | Kubernetes 1.26 | Kubernetes 1.27 | Kubernetes 1.28 | Kubernetes 1.29 | Kubernetes 1.30 | 
+|------------------------| --------------- |-----------------|-----------------| --------------- | --------------- |-----------------|
+| KubeEdge 1.16          | ✓               | ✓               | ✓               | -               | -               | -               |
+| KubeEdge 1.17          | +               | ✓               | ✓               | ✓               | -               | -               |
+| KubeEdge 1.18          | +               | +               | ✓               | ✓               | ✓               | -               |
+| KubeEdge 1.19          | +               | +               | ✓               | ✓               | ✓               | -               |
+| KubeEdge 1.20          | +               | +               | +               | ✓               | ✓               | ✓               |
+| KubeEdge HEAD (master) | +               | +               | +               | ✓               | ✓               | ✓               |
 
 说明：
 * `✓` KubeEdge 和 Kubernetes 的版本是完全兼容的
@@ -82,13 +80,15 @@ KubeEdge 由云端和边缘端部分构成：
 
 ## 路线图
 
-* [2021 Roadmap](./docs/roadmap.md#roadmap)
+* [2024 Roadmap](https://github.com/kubeedge/community/blob/master/roadmap_zh.md)
 
 ## 社区例会
 
-例会时间：
-- 欧洲时间：**北京时间 周三 16:30-17:30**（每双周一次，从 2020 年 2 月 19 日开始）。[『查询本地时间』](https://www.thetimezoneconverter.com/?t=16%3A30&tz=GMT%2B8&)
+技术指导委员会 (TSC) 会议：
 - 太平洋时间：**北京时间 周三 10:00-11:00**（每双周一次，从 2020 年 2 月 26 日开始）。[『查询本地时间』](https://www.thetimezoneconverter.com/?t=10%3A00&tz=GMT%2B8&)
+
+例会时间：
+- 欧洲时间：**北京时间 周三 16:00-17:30**（每周一次，从 2020 年 2 月 19 日开始）。[『查询本地时间』](https://www.thetimezoneconverter.com/?t=16%3A30&tz=GMT%2B8&)
 
 会议资源：
 - [会议纪要和议程](https://docs.google.com/document/d/1Sr5QS_Z04uPfRbA7PrXr3aPwCRpx7EtsyHq7mp6CnHs/edit)
@@ -103,7 +103,7 @@ KubeEdge 由云端和边缘端部分构成：
 如果您有任何疑问，请以下方式与我们联系：
 
 - [mailing list](https://groups.google.com/forum/#!forum/kubeedge)
-- [slack](https://join.slack.com/t/kubeedge/shared_invite/enQtNjc0MTg2NTg2MTk0LWJmOTBmOGRkZWNhMTVkNGU1ZjkwNDY4MTY4YTAwNDAyMjRkMjdlMjIzYmMxODY1NGZjYzc4MWM5YmIxZjU1ZDI)
+- [slack](https://kubeedge.io/docs/community/slack)
 - [twitter](https://twitter.com/kubeedge)
 
 ## 贡献
@@ -123,7 +123,7 @@ KubeEdge的第三方安全审计报告已于2022年7月完成。此外，KubeEdg
 ### 报告安全漏洞
 
 我们鼓励漏洞研究人员和行业组织主动将KubeEdge社区的疑似安全漏洞报告给KubeEdge社区安全团队(`cncf-kubeedge-security@lists.cncf.io`)。我们会快速的响应、分析和解决上报的安全问题或安全漏洞。
-详细漏洞处理流程及如何上报漏洞请查看 [Security Policy](https://github.com/kubeedge/community/blob/master/security-team/SECURITY.md)。
+详细漏洞处理流程及如何上报漏洞请查看 [Security Policy](https://github.com/kubeedge/community/blob/master/team-security/SECURITY.md)。
 
 ## 许可证
 

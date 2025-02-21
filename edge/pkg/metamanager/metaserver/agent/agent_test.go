@@ -25,6 +25,8 @@ import (
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
 
 	commontypes "github.com/kubeedge/kubeedge/common/types"
+	connect "github.com/kubeedge/kubeedge/edge/pkg/common/cloudconnection"
+	metaserverconfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/config"
 )
 
 func TestApplicationGC(t *testing.T) {
@@ -37,7 +39,8 @@ func TestApplicationGC(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			a := Agent{nodeName: "test"}
+			metaserverconfig.Config.NodeName = "test"
+			a := Agent{}
 			requestInfo := &apirequest.RequestInfo{
 				IsResourceRequest: true,
 				Verb:              "GET",
@@ -48,7 +51,9 @@ func TestApplicationGC(t *testing.T) {
 				Resource:          "nodes",
 			}
 			ctx := apirequest.WithRequestInfo(context.Background(), requestInfo)
-			ctx = context.WithValue(ctx, commontypes.AuthorizationKey, "Bearer xxxx")
+			ctx = context.WithValue(ctx, commontypes.HeaderAuthorization, "Bearer xxxx")
+
+			connect.SetConnected(true)
 
 			app, _ := a.Generate(ctx, "get", metav1.GetOptions{}, nil)
 			app.Close()
@@ -56,7 +61,7 @@ func TestApplicationGC(t *testing.T) {
 			app.Timestamp = time.Unix(1469579899, 0)
 			a.GC()
 			_, ok := a.Applications.Load(app.Identifier())
-			if ok == true {
+			if ok {
 				t.Errorf("Application delete failed")
 			}
 		})

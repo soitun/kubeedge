@@ -1,4 +1,4 @@
-FROM golang:1.16-alpine3.13 AS builder
+FROM golang:1.22.9-alpine3.19 AS builder
 
 ARG GO_LDFLAGS
 
@@ -8,7 +8,7 @@ RUN CGO_ENABLED=0 GO111MODULE=off go build -v -o /usr/local/bin/iptables-manager
     github.com/kubeedge/kubeedge/cloud/cmd/iptablesmanager
 
 
-FROM alpine:3.13
+FROM alpine:3.19
 
 COPY --from=builder /usr/local/bin/iptables-manager /usr/local/bin/iptables-manager
 

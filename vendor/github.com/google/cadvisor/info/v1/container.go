@@ -395,6 +395,10 @@ type MemoryStats struct {
 
 	Failcnt uint64 `json:"failcnt"`
 
+	// Size of kernel memory allocated in bytes.
+	// Units: Bytes.
+	KernelUsage uint64 `json:"kernel"`
+
 	ContainerData    MemoryStatsMemoryData `json:"container_data,omitempty"`
 	HierarchicalData MemoryStatsMemoryData `json:"hierarchical_data,omitempty"`
 }
@@ -963,6 +967,8 @@ type ContainerStats struct {
 	Resctrl ResctrlStats `json:"resctrl,omitempty"`
 
 	CpuSet CPUSetStats `json:"cpuset,omitempty"`
+
+	OOMEvents uint64 `json:"oom_events,omitempty"`
 }
 
 func timeEq(t1, t2 time.Time, tolerance time.Duration) bool {

@@ -33,12 +33,12 @@ import (
 	core "k8s.io/client-go/testing"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/reliablesyncs/v1alpha1"
+	"github.com/kubeedge/api/client/clientset/versioned/fake"
 	beehivemodel "github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub/common"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/messagelayer"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
-	"github.com/kubeedge/kubeedge/pkg/apis/reliablesyncs/v1alpha1"
-	"github.com/kubeedge/kubeedge/pkg/client/clientset/versioned/fake"
 )
 
 var (
@@ -81,12 +81,12 @@ var ErrVersionConflict = errors.New("VersionError")
 
 // ObjectSyncReactor is a core.Reactor that simulates etcd and API server. It
 // stores:
-// - Latest version of objectSyncs saved by the session.
-// - Optionally, list of error that should be returned by reactor, simulating
-//   etcd / API server failures. These errors are evaluated in order and every
-//   error is returned only once. I.e. when the reactor finds matching
-//   ReactorError, it return appropriate error and removes the ReactorError from
-//   the list.
+//   - Latest version of objectSyncs saved by the session.
+//   - Optionally, list of error that should be returned by reactor, simulating
+//     etcd / API server failures. These errors are evaluated in order and every
+//     error is returned only once. I.e. when the reactor finds matching
+//     ReactorError, it return appropriate error and removes the ReactorError from
+//     the list.
 type ObjectSyncReactor struct {
 	objectSyncs map[string]*v1alpha1.ObjectSync
 	lock        sync.RWMutex

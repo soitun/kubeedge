@@ -21,12 +21,13 @@ import (
 	"reflect"
 	"testing"
 
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 func TestRuleManager_Events(t *testing.T) {
@@ -84,7 +85,9 @@ func TestNewRuleManager(t *testing.T) {
 		QPS:         100,
 		Burst:       200,
 		ContentType: "application/vnd.kubernetes.protobuf",
-	})
+	}, false)
+
+	client.DefaultGetRestMapper = func() (mapper meta.RESTMapper, err error) { return nil, nil }
 
 	tests := []struct {
 		name string
@@ -93,7 +96,7 @@ func TestNewRuleManager(t *testing.T) {
 		{
 			"TestNewRuleManager(): Case 1",
 			args{
-				informers.GetInformersManager().GetCRDInformerFactory().Rules().V1().Rules().Informer(),
+				informers.GetInformersManager().GetKubeEdgeInformerFactory().Rules().V1().Rules().Informer(),
 			},
 		},
 	}

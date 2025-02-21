@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"k8s.io/klog/v2"
+
+	"github.com/kubeedge/kubeedge/common/types"
 )
 
 const (
@@ -97,10 +99,10 @@ func BuildRequest(method string, urlStr string, body io.Reader, token string, no
 	}
 	if token != "" {
 		bearerToken := "Bearer " + token
-		req.Header.Add("Authorization", bearerToken)
+		req.Header.Add(types.HeaderAuthorization, bearerToken)
 	}
 	if nodeName != "" {
-		req.Header.Add("NodeName", nodeName)
+		req.Header.Add(types.HeaderNodeName, nodeName)
 	}
 	return req, nil
 }

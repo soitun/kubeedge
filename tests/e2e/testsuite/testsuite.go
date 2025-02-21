@@ -29,9 +29,9 @@ import (
 	"github.com/kubeedge/kubeedge/tests/e2e/utils"
 )
 
-func CreateDeploymentTest(c clientset.Interface, replica int32, deplName string, ctx *utils.TestContext) *v1.PodList {
+func CreateDeploymentTest(c clientset.Interface, replica int32, deplName string) *v1.PodList {
 	ginkgo.By(fmt.Sprintf("create deployment %s", deplName))
-	d := utils.NewDeployment(deplName, ctx.Cfg.AppImageURL[1], replica)
+	d := utils.NewDeployment(deplName, utils.LoadConfig().AppImageURL[1], replica)
 	_, err := utils.CreateDeployment(c, d)
 	gomega.Expect(err).To(gomega.BeNil())
 
@@ -39,7 +39,7 @@ func CreateDeploymentTest(c clientset.Interface, replica int32, deplName string,
 	_, err = utils.GetDeployment(c, v1.NamespaceDefault, deplName)
 	gomega.Expect(err).To(gomega.BeNil())
 
-	time.Sleep(time.Second * 1)
+	time.Sleep(time.Second * 20)
 
 	ginkgo.By(fmt.Sprintf("get pod for deployment %s", deplName))
 	labelSelector := labels.SelectorFromSet(map[string]string{"app": deplName})

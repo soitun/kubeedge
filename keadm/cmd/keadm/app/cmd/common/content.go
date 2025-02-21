@@ -19,6 +19,8 @@ package common
 import (
 	"fmt"
 	"os"
+
+	"github.com/kubeedge/api/apis/common/constants"
 )
 
 // TODO (@zc2638) Need to migrate util's constants to common
@@ -31,14 +33,19 @@ Type=simple
 ExecStart=%s
 Restart=always
 RestartSec=10
+Environment=%s
+KillMode=process
 
 [Install]
 WantedBy=multi-user.target
 `
 
-func GenerateServiceFile(process string, execStartCmd string) error {
+func GenerateServiceFile(process string, execStartCmd string, withMqtt bool) error {
 	filename := fmt.Sprintf("%s.service", process)
-	content := fmt.Sprintf(serviceFileTemplate, process, execStartCmd)
+
+	content := fmt.Sprintf(serviceFileTemplate, process, execStartCmd,
+		// FIXME: cleanup Environment when the static pod mqtt broker no longer needs to be compatible
+		fmt.Sprintf("%s=%t", constants.DeployMqttContainerEnv, withMqtt))
 	serviceFilePath := fmt.Sprintf("/etc/systemd/system/%s", filename)
 	return os.WriteFile(serviceFilePath, []byte(content), os.ModePerm)
 }

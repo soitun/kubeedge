@@ -18,17 +18,15 @@ package kuberuntime
 
 import (
 	"encoding/json"
-	"runtime"
 	"strconv"
 
 	v1 "k8s.io/api/core/v1"
 	kubetypes "k8s.io/apimachinery/pkg/types"
 	utilfeature "k8s.io/apiserver/pkg/util/feature"
 	"k8s.io/klog/v2"
+	"k8s.io/kubelet/pkg/types"
 	"k8s.io/kubernetes/pkg/features"
 	kubecontainer "k8s.io/kubernetes/pkg/kubelet/container"
-	"k8s.io/kubernetes/pkg/kubelet/types"
-	sc "k8s.io/kubernetes/pkg/securitycontext"
 )
 
 const (
@@ -37,17 +35,12 @@ const (
 	podTerminationGracePeriodLabel = "io.kubernetes.pod.terminationGracePeriod"
 
 	containerHashLabel                     = "io.kubernetes.container.hash"
+	containerHashWithoutResourcesLabel     = "io.kubernetes.container.hashWithoutResources"
 	containerRestartCountLabel             = "io.kubernetes.container.restartCount"
 	containerTerminationMessagePathLabel   = "io.kubernetes.container.terminationMessagePath"
 	containerTerminationMessagePolicyLabel = "io.kubernetes.container.terminationMessagePolicy"
 	containerPreStopHandlerLabel           = "io.kubernetes.container.preStopHandler"
 	containerPortsLabel                    = "io.kubernetes.container.ports"
-
-	// TODO: remove this annotation when moving to beta for Windows hostprocess containers
-	// xref: https://github.com/kubernetes/kubernetes/pull/99576/commits/42fb66073214eed6fe43fa8b1586f396e30e73e3#r635392090
-	// Currently, ContainerD on Windows does not yet fully support HostProcess containers
-	// but will pass annotations to hcsshim which does have support.
-	windowsHostProcessContainer = "microsoft.com/hostprocess-container"
 )
 
 type labeledPodSandboxInfo struct {
@@ -72,12 +65,13 @@ type labeledContainerInfo struct {
 
 type annotatedContainerInfo struct {
 	Hash                      uint64
+	HashWithoutResources      uint64
 	RestartCount              int
 	PodDeletionGracePeriod    *int64
 	PodTerminationGracePeriod *int64
 	TerminationMessagePath    string
 	TerminationMessagePolicy  v1.TerminationMessagePolicy
-	PreStopHandler            *v1.Handler
+	PreStopHandler            *v1.LifecycleHandler
 	ContainerPorts            []v1.ContainerPort
 }
 
@@ -99,23 +93,7 @@ func newPodLabels(pod *v1.Pod) map[string]string {
 
 // newPodAnnotations creates pod annotations from v1.Pod.
 func newPodAnnotations(pod *v1.Pod) map[string]string {
-	annotations := map[string]string{}
-
-	// Get annotations from v1.Pod
-	for k, v := range pod.Annotations {
-		annotations[k] = v
-	}
-
-	if runtime.GOOS == "windows" && utilfeature.DefaultFeatureGate.Enabled(features.WindowsHostProcessContainers) {
-		if kubecontainer.HasWindowsHostProcessContainer(pod) {
-			// While WindowsHostProcessContainers is in alpha pass 'microsoft.com/hostprocess-container' annotation
-			// to pod sandbox creations request. ContainerD on Windows does not yet fully support HostProcess
-			// containers but will pass annotations to hcsshim which does have support.
-			annotations[windowsHostProcessContainer] = "true"
-		}
-	}
-
-	return annotations
+	return pod.Annotations
 }
 
 // newContainerLabels creates container labels from v1.Container and v1.Pod.
@@ -139,6 +117,9 @@ func newContainerAnnotations(container *v1.Container, pod *v1.Pod, restartCount 
 	}
 
 	annotations[containerHashLabel] = strconv.FormatUint(kubecontainer.HashContainer(container), 16)
+	if utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling) {
+		annotations[containerHashWithoutResourcesLabel] = strconv.FormatUint(kubecontainer.HashContainerWithoutResources(container), 16)
+	}
 	annotations[containerRestartCountLabel] = strconv.Itoa(restartCount)
 	annotations[containerTerminationMessagePathLabel] = container.TerminationMessagePath
 	annotations[containerTerminationMessagePolicyLabel] = string(container.TerminationMessagePolicy)
@@ -166,15 +147,6 @@ func newContainerAnnotations(container *v1.Container, pod *v1.Pod, restartCount 
 			klog.ErrorS(err, "Unable to marshal container ports for container", "containerName", container.Name, "pod", klog.KObj(pod))
 		} else {
 			annotations[containerPortsLabel] = string(rawContainerPorts)
-		}
-	}
-
-	if runtime.GOOS == "windows" && utilfeature.DefaultFeatureGate.Enabled(features.WindowsHostProcessContainers) {
-		if sc.HasWindowsHostProcessRequest(pod, container) {
-			// While WindowsHostProcessContainers is in alpha pass 'microsoft.com/hostprocess-container' annotation
-			// to create containers request. ContainerD on Windows does not yet fully support HostProcess containers
-			// but will pass annotations to hcsshim which does have support.
-			annotations[windowsHostProcessContainer] = "true"
 		}
 	}
 
@@ -228,6 +200,11 @@ func getContainerInfoFromAnnotations(annotations map[string]string) *annotatedCo
 	if containerInfo.Hash, err = getUint64ValueFromLabel(annotations, containerHashLabel); err != nil {
 		klog.ErrorS(err, "Unable to get label value from annotations", "label", containerHashLabel, "annotations", annotations)
 	}
+	if utilfeature.DefaultFeatureGate.Enabled(features.InPlacePodVerticalScaling) {
+		if containerInfo.HashWithoutResources, err = getUint64ValueFromLabel(annotations, containerHashWithoutResourcesLabel); err != nil {
+			klog.ErrorS(err, "Unable to get label value from annotations", "label", containerHashWithoutResourcesLabel, "annotations", annotations)
+		}
+	}
 	if containerInfo.RestartCount, err = getIntValueFromLabel(annotations, containerRestartCountLabel); err != nil {
 		klog.ErrorS(err, "Unable to get label value from annotations", "label", containerRestartCountLabel, "annotations", annotations)
 	}
@@ -238,7 +215,7 @@ func getContainerInfoFromAnnotations(annotations map[string]string) *annotatedCo
 		klog.ErrorS(err, "Unable to get label value from annotations", "label", podTerminationGracePeriodLabel, "annotations", annotations)
 	}
 
-	preStopHandler := &v1.Handler{}
+	preStopHandler := &v1.LifecycleHandler{}
 	if found, err := getJSONObjectFromLabel(annotations, containerPreStopHandlerLabel, preStopHandler); err != nil {
 		klog.ErrorS(err, "Unable to get label value from annotations", "label", containerPreStopHandlerLabel, "annotations", annotations)
 	} else if found {

@@ -121,4 +121,11 @@ const (
 	InternalErrorCode = 500
 
 	TypeDeleted = "deleted"
+	TypeUpdated = "updated"
+
+	DeviceStatusOK        = "ok"
+	DeviceStatusOnline    = "online"
+	DeviceStatusOffline   = "offline"
+	DeviceStatusUnhealthy = "unhealthy" /* Unhealthy status from device */
+	DeviceStatusUnknown   = "unknown"
 )

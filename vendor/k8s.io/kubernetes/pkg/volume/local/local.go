@@ -57,6 +57,7 @@ type localVolumePlugin struct {
 var _ volume.VolumePlugin = &localVolumePlugin{}
 var _ volume.PersistentVolumePlugin = &localVolumePlugin{}
 var _ volume.BlockVolumePlugin = &localVolumePlugin{}
+var _ volume.NodeExpandableVolumePlugin = &localVolumePlugin{}
 
 const (
 	localVolumePluginName = "kubernetes.io/local-volume"
@@ -93,6 +94,10 @@ func (plugin *localVolumePlugin) SupportsMountOption() bool {
 
 func (plugin *localVolumePlugin) SupportsBulkVolumeVerification() bool {
 	return false
+}
+
+func (plugin *localVolumePlugin) SupportsSELinuxContextMount(spec *volume.Spec) (bool, error) {
+	return false, nil
 }
 
 func (plugin *localVolumePlugin) GetAccessModes() []v1.PersistentVolumeAccessMode {
@@ -192,7 +197,7 @@ func (plugin *localVolumePlugin) NewBlockVolumeUnmapper(volName string,
 }
 
 // TODO: check if no path and no topology constraints are ok
-func (plugin *localVolumePlugin) ConstructVolumeSpec(volumeName, mountPath string) (*volume.Spec, error) {
+func (plugin *localVolumePlugin) ConstructVolumeSpec(volumeName, mountPath string) (volume.ReconstructedVolume, error) {
 	fs := v1.PersistentVolumeFilesystem
 	// The main purpose of reconstructed volume is to clean unused mount points
 	// and directories.
@@ -204,7 +209,7 @@ func (plugin *localVolumePlugin) ConstructVolumeSpec(volumeName, mountPath strin
 	mounter := plugin.host.GetMounter(plugin.GetPluginName())
 	refs, err := mounter.GetMountRefs(mountPath)
 	if err != nil {
-		return nil, err
+		return volume.ReconstructedVolume{}, err
 	}
 	baseMountPath := plugin.generateBlockDeviceBaseGlobalPath()
 	for _, ref := range refs {
@@ -216,7 +221,7 @@ func (plugin *localVolumePlugin) ConstructVolumeSpec(volumeName, mountPath strin
 			// source and can be used in reconstructed volume.
 			path, _, err = mount.GetDeviceNameFromMount(mounter, ref)
 			if err != nil {
-				return nil, err
+				return volume.ReconstructedVolume{}, err
 			}
 			klog.V(4).Infof("local: reconstructing volume %q (pod volume mount: %q) with device %q", volumeName, mountPath, path)
 			break
@@ -235,7 +240,9 @@ func (plugin *localVolumePlugin) ConstructVolumeSpec(volumeName, mountPath strin
 			VolumeMode: &fs,
 		},
 	}
-	return volume.NewSpecFromPersistentVolume(localVolume, false), nil
+	return volume.ReconstructedVolume{
+		Spec: volume.NewSpecFromPersistentVolume(localVolume, false),
+	}, nil
 }
 
 func (plugin *localVolumePlugin) ConstructBlockVolumeSpec(podUID types.UID, volumeName,
@@ -376,6 +383,48 @@ func (dm *deviceMounter) MountDevice(spec *volume.Spec, devicePath string, devic
 	}
 }
 
+func (plugin *localVolumePlugin) RequiresFSResize() bool {
+	return true
+}
+
+func (plugin *localVolumePlugin) NodeExpand(resizeOptions volume.NodeResizeOptions) (bool, error) {
+	fsVolume, err := util.CheckVolumeModeFilesystem(resizeOptions.VolumeSpec)
+	if err != nil {
+		return false, fmt.Errorf("error checking VolumeMode: %v", err)
+	}
+	if !fsVolume {
+		return true, nil
+	}
+
+	localDevicePath := resizeOptions.VolumeSpec.PersistentVolume.Spec.Local.Path
+
+	kvh, ok := plugin.host.(volume.KubeletVolumeHost)
+	if !ok {
+		return false, fmt.Errorf("plugin volume host does not implement KubeletVolumeHost interface")
+	}
+
+	fileType, err := kvh.GetHostUtil().GetFileType(localDevicePath)
+	if err != nil {
+		return false, err
+	}
+
+	switch fileType {
+	case hostutil.FileTypeBlockDev:
+		_, err = util.GenericResizeFS(plugin.host, plugin.GetPluginName(), localDevicePath, resizeOptions.DeviceMountPath)
+		if err != nil {
+			return false, err
+		}
+		return true, nil
+	case hostutil.FileTypeDirectory:
+		// if the given local volume path is of already filesystem directory, return directly because
+		// we do not want to prevent mount operation from succeeding.
+		klog.InfoS("Expansion of directory based local volumes is NO-OP", "localVolumePath", localDevicePath)
+		return true, nil
+	default:
+		return false, fmt.Errorf("only directory and block device are supported")
+	}
+}
+
 func getVolumeSourceFSType(spec *volume.Spec) (string, error) {
 	if spec.PersistentVolume != nil &&
 		spec.PersistentVolume.Spec.Local != nil {
@@ -461,17 +510,10 @@ var _ volume.Mounter = &localVolumeMounter{}
 
 func (m *localVolumeMounter) GetAttributes() volume.Attributes {
 	return volume.Attributes{
-		ReadOnly:        m.readOnly,
-		Managed:         !m.readOnly,
-		SupportsSELinux: true,
+		ReadOnly:       m.readOnly,
+		Managed:        !m.readOnly,
+		SELinuxRelabel: true,
 	}
-}
-
-// CanMount checks prior to mount operations to verify that the required components (binaries, etc.)
-// to mount the volume are available on the underlying node.
-// If not, it returns an error
-func (m *localVolumeMounter) CanMount() error {
-	return nil
 }
 
 // SetUp bind mounts the directory to the volume path
@@ -573,7 +615,7 @@ func (m *localVolumeMounter) SetUpAt(dir string, mounterArgs volume.MounterArgs)
 	if !m.readOnly {
 		// Volume owner will be written only once on the first volume mount
 		if len(refs) == 0 {
-			return volume.SetVolumeOwnership(m, mounterArgs.FsGroup, mounterArgs.FSGroupChangePolicy, util.FSGroupCompleteHook(m.plugin, nil))
+			return volume.SetVolumeOwnership(m, dir, mounterArgs.FsGroup, mounterArgs.FSGroupChangePolicy, util.FSGroupCompleteHook(m.plugin, nil))
 		}
 	}
 	return nil

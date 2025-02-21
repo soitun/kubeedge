@@ -18,10 +18,9 @@ import (
 )
 
 var groupMap = map[string]string{
-	"resource": modules.MetaGroup,
-	"twin":     modules.TwinGroup,
-	"func":     modules.MetaGroup,
-	"user":     modules.BusGroup,
+	"twin": modules.TwinGroup,
+	"func": modules.MetaGroup,
+	"user": modules.BusGroup,
 }
 
 var (
@@ -60,7 +59,7 @@ func (*defaultHandler) Filter(message *model.Message) bool {
 		group == messagepkg.FuncGroupName || group == messagepkg.UserGroupName
 }
 
-func (*defaultHandler) Process(message *model.Message, clientHub clients.Adapter) error {
+func (*defaultHandler) Process(message *model.Message, _ clients.Adapter) error {
 	group := message.GetGroup()
 	md := ""
 	switch group {
@@ -72,6 +71,14 @@ func (*defaultHandler) Process(message *model.Message, clientHub clients.Adapter
 		md = modules.MetaGroup
 	case messagepkg.UserGroupName:
 		md = modules.BusGroup
+	}
+
+	// TODO: just for a temporary fix.
+	// The code related to device twin message transmission will be reconstructed
+	//  by using sendSync function instead of send function.
+	if group == messagepkg.TwinGroupName {
+		beehiveContext.SendToGroup(md, *message)
+		return nil
 	}
 
 	isResponse := isSyncResponse(message.GetParentID())
@@ -190,6 +197,9 @@ func (eh *EdgeHub) keepalive() {
 }
 
 func (eh *EdgeHub) pubConnectInfo(isConnected bool) {
+	// update connected info
+	connect.SetConnected(isConnected)
+
 	// var info model.Message
 	content := connect.CloudConnected
 	if !isConnected {

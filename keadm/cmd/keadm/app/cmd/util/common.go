@@ -18,17 +18,22 @@ package util
 
 import (
 	"archive/tar"
+	"bytes"
 	"compress/gzip"
 	"crypto/sha512"
+	"crypto/tls"
+	"crypto/x509"
+	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/blang/semver"
 	"github.com/spf13/pflag"
@@ -39,14 +44,16 @@ import (
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/kubeedge/common/constants"
+	commontypes "github.com/kubeedge/kubeedge/common/types"
 	types "github.com/kubeedge/kubeedge/keadm/cmd/keadm/app/cmd/common"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
+	"github.com/kubeedge/kubeedge/pkg/util/fsm"
 	pkgversion "github.com/kubeedge/kubeedge/pkg/version"
 )
 
 var (
-	kubeReleaseRegex = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-0-9a-zA-Z_\.+]*)?$`)
+	kubeReleaseRegex = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)([-\w.+]*)?$`)
 )
 
 // Constants used by installers
@@ -55,10 +62,6 @@ const (
 	EdgeServiceFile      = "edgecore.service"
 	CloudServiceFile     = "cloudcore.service"
 	ServiceFileURLFormat = "https://raw.githubusercontent.com/kubeedge/kubeedge/release-%s/build/tools/%s"
-	KubeEdgePath         = "/etc/kubeedge/"
-	KubeEdgeBackupPath   = "/etc/kubeedge/backup/"
-	KubeEdgeUpgradePath  = "/etc/kubeedge/upgrade/"
-	KubeEdgeUsrBinPath   = "/usr/local/bin"
 	KubeEdgeBinaryName   = "edgecore"
 	KeadmBinaryName      = "keadm"
 
@@ -68,14 +71,7 @@ const (
 	KubeEdgeCloudCoreNewYaml = KubeEdgeConfigDir + "cloudcore.yaml"
 	KubeEdgeEdgeCoreNewYaml  = KubeEdgeConfigDir + "edgecore.yaml"
 
-	KubeEdgeLogPath = "/var/log/kubeedge/"
 	KubeEdgeCrdPath = KubeEdgePath + "crds"
-
-	KubeEdgeSocketPath = "/var/lib/kubeedge/"
-
-	EdgeRootDir = "/var/lib/edged"
-
-	SystemdBootPath = "/run/systemd/system"
 
 	KubeEdgeCRDDownloadURL = "https://raw.githubusercontent.com/kubeedge/kubeedge/release-%s/build/crds"
 
@@ -85,6 +81,8 @@ const (
 	APT    string = "apt"
 	YUM    string = "yum"
 	PACMAN string = "pacman"
+
+	EdgeCoreSELinuxLabel = "system_u:object_r:bin_t:s0"
 )
 
 // AddToolVals gets the value and default values of each flags and collects them in temporary cache
@@ -147,31 +145,6 @@ func GetOSInterface() types.OSTypeInstaller {
 		fmt.Println("Failed to detect supported package manager command(apt, yum, pacman), exit")
 		panic("Failed to detect supported package manager command(apt, yum, pacman), exit")
 	}
-}
-
-// RunningModuleV2 identifies cloudcore/edgecore running or not.
-// only used for cloudcore container install and edgecore binary install
-func RunningModuleV2(opt *types.ResetOptions) types.ModuleRunning {
-	osType := GetOSInterface()
-	cloudCoreRunning, err := IsCloudcoreContainerRunning(constants.SystemNamespace, opt.Kubeconfig)
-	if err != nil {
-		// just log the error, maybe we do not care
-		klog.Warningf("failed to check cloudcore is running: %v", err)
-	}
-	if cloudCoreRunning {
-		return types.KubeEdgeCloudRunning
-	}
-
-	edgeCoreRunning, err := osType.IsKubeEdgeProcessRunning(KubeEdgeBinaryName)
-	if err != nil {
-		// just log the error, maybe we do not care
-		klog.Warningf("failed to check edgecore is running: %v", err)
-	}
-	if edgeCoreRunning {
-		return types.KubeEdgeEdgeRunning
-	}
-
-	return types.NoneRunning
 }
 
 // RunningModule identifies cloudcore/edgecore running or not.
@@ -256,405 +229,59 @@ func GetCurrentVersion(version string) (string, error) {
 	return GetCurrentVersion(remoteVersion)
 }
 
-// keadmVersion returns the version of the client without metadata.
-func keadmVersion(info string) (string, error) {
-	v, err := versionutil.ParseSemantic(info)
+func DecompressTarGz(gzFilePath, dest string) error {
+	reader, err := os.Open(gzFilePath)
 	if err != nil {
-		return "", fmt.Errorf("keadm version error: %v", err)
-	}
-	// There is no utility in versionutil to get the version without the metadata,
-	// so this needs some manual formatting.
-	// Discard offsets after a release label and keep the labels down to e.g. `alpha.0` instead of
-	// including the offset e.g. `alpha.0.206`. This is done to comply with GCR image tags.
-	pre := v.PreRelease()
-	patch := v.Patch()
-	if len(pre) > 0 {
-		if patch > 0 {
-			// If the patch version is more than zero, decrement it and remove the label.
-			// this is done to comply with the latest stable patch release.
-			patch = patch - 1
-			pre = ""
-		} else {
-			split := strings.Split(pre, ".")
-			if len(split) > 2 {
-				pre = split[0] + "." + split[1] // Exclude the third element
-			} else if len(split) < 2 {
-				pre = split[0] + ".0" // Append .0 to a partial label
-			}
-			pre = "-" + pre
-		}
-	}
-	vStr := fmt.Sprintf("v%d.%d.%d%s", v.Major(), v.Minor(), patch, pre)
-	return vStr, nil
-}
-
-// Validate if the remote version is one Minor release newer than the client version.
-// This is done to conform with "stable-X" and only allow remote versions from
-// the same Patch level release.
-func validateStableVersion(remoteVersion, clientVersion string) (string, error) {
-	verRemote, err := versionutil.ParseGeneric(remoteVersion)
-	if err != nil {
-		return "", fmt.Errorf("remote version error: %v", err)
-	}
-	verClient, err := versionutil.ParseGeneric(clientVersion)
-	if err != nil {
-		return "", fmt.Errorf("client version error: %v", err)
-	}
-	// If the remote Major version is bigger or if the Major versions are the same,
-	// but the remote Minor is bigger use the client version release. This handles Major bumps too.
-	if verClient.Major() < verRemote.Major() ||
-		(verClient.Major() == verRemote.Major()) && verClient.Minor() < verRemote.Minor() {
-		klog.Infof("remote version is much newer: %s; falling back to: %s", remoteVersion, clientVersion)
-		return clientVersion, nil
-	}
-	return remoteVersion, nil
-}
-
-// BuildConfig builds config from flags
-func BuildConfig(kubeConfig, master string) (conf *rest.Config, err error) {
-	config, err := clientcmd.BuildConfigFromFlags(master, kubeConfig)
-	if err != nil {
-		return nil, err
-	}
-
-	return config, nil
-}
-
-// isK8SComponentInstalled checks if said K8S version is already installed in the host
-func isK8SComponentInstalled(kubeConfig, master string) error {
-	config, err := BuildConfig(kubeConfig, master)
-	if err != nil {
-		return fmt.Errorf("failed to build config, err: %v", err)
-	}
-
-	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
-	if err != nil {
-		return fmt.Errorf("failed to init discovery client, err: %v", err)
-	}
-
-	discoveryClient.RESTClient().Post()
-	serverVersion, err := discoveryClient.ServerVersion()
-	if err != nil {
-		return fmt.Errorf("failed to get the version of K8s master, please check whether K8s was successfully installed, err: %v", err)
-	}
-
-	return checkKubernetesVersion(serverVersion)
-}
-
-func checkKubernetesVersion(serverVersion *version.Info) error {
-	reg := regexp.MustCompile(`[[:digit:]]*`)
-	minorVersion := reg.FindString(serverVersion.Minor)
-
-	k8sMinorVersion, err := strconv.Atoi(minorVersion)
-	if err != nil {
-		return fmt.Errorf("could not parse the minor version of K8s, error: %s", err)
-	}
-	if k8sMinorVersion >= types.DefaultK8SMinimumVersion {
-		return nil
-	}
-
-	return fmt.Errorf("your minor version of K8s is lower than %d, please reinstall newer version", types.DefaultK8SMinimumVersion)
-}
-
-// installKubeEdge downloads the provided version of KubeEdge.
-// Untar's in the specified location /etc/kubeedge/ and then copies
-// the binary to excecutables' path (eg: /usr/local/bin)
-func installKubeEdge(options types.InstallOptions, version semver.Version) error {
-	// program's architecture: amd64, arm64, arm
-	arch := runtime.GOARCH
-
-	// create the storage path of the kubeedge installation packages
-	if options.TarballPath == "" {
-		options.TarballPath = KubeEdgePath
-	} else {
-		err := os.MkdirAll(options.TarballPath, os.ModePerm)
-		if err != nil {
-			return fmt.Errorf("not able to create %s folder path", options.TarballPath)
-		}
-	}
-
-	err := os.MkdirAll(KubeEdgePath, os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("not able to create %s folder path", KubeEdgePath)
-	}
-
-	//Check if the same version exists, then skip the download and just checksum for it
-	//and if checksum failed, there will be a option to choose to continue to untar or quit.
-	//checksum available at download URL. So that both can be compared to see if
-	//proper download has happened and then only proceed further.
-	//Currently it is missing and once checksum is in place, checksum check required
-	//to be added here.
-	dirname := fmt.Sprintf("kubeedge-v%s-linux-%s", version, arch)
-	filename := fmt.Sprintf("kubeedge-v%s-linux-%s.tar.gz", version, arch)
-	checksumFilename := fmt.Sprintf("checksum_kubeedge-v%s-linux-%s.tar.gz.txt", version, arch)
-	filePath := fmt.Sprintf("%s/%s", options.TarballPath, filename)
-	if _, err = os.Stat(filePath); err == nil {
-		fmt.Printf("Expected or Default KubeEdge version %v is already downloaded and will checksum for it. \n", version)
-		if success, _ := checkSum(filename, checksumFilename, version, options.TarballPath); !success {
-			fmt.Printf("%v in your path checksum failed and do you want to delete this file and try to download again? \n", filename)
-			for {
-				confirm, err := askForconfirm()
-				if err != nil {
-					fmt.Println(err.Error())
-					continue
-				}
-				if confirm {
-					cmdStr := fmt.Sprintf("cd %s && rm -f %s", options.TarballPath, filename)
-					if err := NewCommand(cmdStr).Exec(); err != nil {
-						return err
-					}
-					fmt.Printf("%v have been deleted and will try to download again\n", filename)
-					if err := retryDownload(filename, checksumFilename, version, options.TarballPath); err != nil {
-						return err
-					}
-				} else {
-					fmt.Println("failed to checksum and will continue to install.")
-				}
-				break
-			}
-		} else {
-			fmt.Println("Expected or Default KubeEdge version", version, "is already downloaded")
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	} else {
-		if err := retryDownload(filename, checksumFilename, version, options.TarballPath); err != nil {
-			return err
-		}
-	}
-
-	if err := downloadServiceFile(options.ComponentType, version, KubeEdgePath); err != nil {
-		return fmt.Errorf("fail to download service file,error:{%s}", err.Error())
-	}
-
-	var untarFileAndMoveCloudCore, untarFileAndMoveEdgeCore string
-
-	if options.ComponentType == types.CloudCore {
-		untarFileAndMoveCloudCore = fmt.Sprintf("cd %s && tar -C %s -xvzf %s && cp %s/%s/cloud/cloudcore/%s %s/",
-			options.TarballPath, options.TarballPath, filename, options.TarballPath, dirname, KubeCloudBinaryName, KubeEdgeUsrBinPath)
-
-		cmd := NewCommand(untarFileAndMoveCloudCore)
-		if err := cmd.Exec(); err != nil {
-			return err
-		}
-		fmt.Println(cmd.GetStdOut())
-	} else if options.ComponentType == types.EdgeCore {
-		untarFileAndMoveEdgeCore = fmt.Sprintf("cd %s && tar -C %s -xvzf %s && cp %s/%s/edge/%s %s/",
-			options.TarballPath, options.TarballPath, filename, options.TarballPath, dirname, KubeEdgeBinaryName, KubeEdgeUsrBinPath)
-		cmd := NewCommand(untarFileAndMoveEdgeCore)
-		if err := cmd.Exec(); err != nil {
-			return err
-		}
-		fmt.Println(cmd.GetStdOut())
-	}
-
-	return nil
-}
-
-// runEdgeCore starts edgecore with logs being captured
-func runEdgeCore() error {
-	// create the log dir for kubeedge
-	err := os.MkdirAll(KubeEdgeLogPath, os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("not able to create %s folder path", KubeEdgeLogPath)
-	}
-
-	systemdExist := HasSystemd()
-
-	var binExec string
-	if systemdExist {
-		binExec = fmt.Sprintf("sudo ln /etc/kubeedge/%s.service /etc/systemd/system/%s.service && sudo systemctl daemon-reload && sudo systemctl enable %s && sudo systemctl start %s",
-			types.EdgeCore, types.EdgeCore, types.EdgeCore, types.EdgeCore)
-	} else {
-		binExec = fmt.Sprintf("%s/%s > %skubeedge/edge/%s.log 2>&1 &", KubeEdgeUsrBinPath, KubeEdgeBinaryName, KubeEdgePath, KubeEdgeBinaryName)
-	}
-
-	cmd := NewCommand(binExec)
-	if err := cmd.Exec(); err != nil {
 		return err
 	}
-	fmt.Println(cmd.GetStdOut())
+	defer reader.Close()
 
-	if systemdExist {
-		fmt.Printf("KubeEdge edgecore is running, For logs visit: journalctl -u %s.service -xe\n", types.EdgeCore)
-	} else {
-		fmt.Println("KubeEdge edgecore is running, For logs visit: ", KubeEdgeLogPath+KubeEdgeBinaryName+".log")
-	}
-	return nil
-}
-
-// KillKubeEdgeBinary will search for KubeEdge process and forcefully kill it
-func KillKubeEdgeBinary(proc string) error {
-	var binExec string
-	if proc == "cloudcore" {
-		binExec = fmt.Sprintf("pkill %s", proc)
-	} else {
-		systemdExist := HasSystemd()
-
-		var serviceName string
-		if running, err := isEdgeCoreServiceRunning("edge"); err == nil && running {
-			serviceName = "edge"
-		}
-		if running, err := isEdgeCoreServiceRunning("edgecore"); err == nil && running {
-			serviceName = "edgecore"
-		}
-
-		if systemdExist && serviceName != "" {
-			// remove the system service.
-			serviceFilePath := fmt.Sprintf("/etc/systemd/system/%s.service", serviceName)
-			serviceFileRemoveExec := fmt.Sprintf("&& sudo rm %s", serviceFilePath)
-			if _, err := os.Stat(serviceFilePath); err != nil && os.IsNotExist(err) {
-				serviceFileRemoveExec = ""
-			}
-			binExec = fmt.Sprintf("sudo systemctl stop %s.service && sudo systemctl disable %s.service %s && sudo systemctl daemon-reload", serviceName, serviceName, serviceFileRemoveExec)
-		} else {
-			binExec = fmt.Sprintf("pkill %s", proc)
-		}
-	}
-	cmd := NewCommand(binExec)
-	if err := cmd.Exec(); err != nil {
+	err = os.MkdirAll(dest, os.ModePerm)
+	if err != nil {
 		return err
 	}
-	fmt.Println(proc, "is stopped")
-	return nil
-}
 
-// IsKubeEdgeProcessRunning checks if the given process is running or not
-func IsKubeEdgeProcessRunning(proc string) (bool, error) {
-	procRunning := fmt.Sprintf("pidof %s 2>&1", proc)
-	cmd := NewCommand(procRunning)
-
-	err := cmd.Exec()
-
-	if cmd.ExitCode == 0 {
-		return true, nil
-	} else if cmd.ExitCode == 1 {
-		return false, nil
-	}
-
-	return false, err
-}
-
-func isEdgeCoreServiceRunning(serviceName string) (bool, error) {
-	serviceRunning := fmt.Sprintf("systemctl list-unit-files | grep enabled | grep %s ", serviceName)
-	cmd := NewCommand(serviceRunning)
-	err := cmd.Exec()
-
-	if cmd.ExitCode == 0 {
-		return true, nil
-	} else if cmd.ExitCode == 1 {
-		return false, nil
-	}
-
-	return false, err
-}
-
-// HasSystemd checks if systemd exist.
-// if command run failed, then check it by sd_booted.
-func HasSystemd() bool {
-	cmd := "file /sbin/init"
-
-	if err := NewCommand(cmd).Exec(); err == nil {
-		return true
-	}
-	// checks whether `SystemdBootPath` exists and is a directory
-	// reference http://www.freedesktop.org/software/systemd/man/sd_booted.html
-	fi, err := os.Lstat(SystemdBootPath)
+	archive, err := gzip.NewReader(reader)
 	if err != nil {
-		return false
+		return err
 	}
-	return fi.IsDir()
-}
+	defer archive.Close()
 
-// computeSHA512Checksum returns the SHA512 checksum of the given file
-func computeSHA512Checksum(filepath string) (string, error) {
-	f, err := os.Open(filepath)
-	if err != nil {
-		return "", err
-	}
+	tr := tar.NewReader(archive)
 
-	defer func() {
-		err := f.Close()
-		if err != nil {
-			fmt.Printf("failed to close file, path: %v, error: %v \n", filepath, err)
-		}
-	}()
-
-	h := sha512.New()
-	if _, err := io.Copy(h, f); err != nil {
-		return "", err
-	}
-
-	return fmt.Sprintf("%x", h.Sum(nil)), nil
-}
-
-func checkSum(filename, checksumFilename string, version semver.Version, tarballPath string) (bool, error) {
-	//Verify the tar with checksum
-	fmt.Printf("%s checksum: \n", filename)
-
-	filepath := fmt.Sprintf("%s/%s", tarballPath, filename)
-	actualChecksum, err := computeSHA512Checksum(filepath)
-	if err != nil {
-		return false, fmt.Errorf("failed to compute checksum for %s: %v", filename, err)
-	}
-
-	fmt.Printf("%s content: \n", checksumFilename)
-	checksumFilepath := fmt.Sprintf("%s/%s", tarballPath, checksumFilename)
-
-	if _, err := os.Stat(checksumFilepath); err == nil {
-		fmt.Printf("Expected or Default checksum file %s is already downloaded. \n", checksumFilename)
-		content, err := os.ReadFile(checksumFilepath)
-		if err != nil {
-			return false, err
-		}
-		checksum := strings.Replace(string(content), "\n", "", -1)
-		if checksum != actualChecksum {
-			fmt.Printf("Failed to verify the checksum of %s ... \n\n", filename)
-			return false, nil
-		}
-	} else {
-		getDesiredCheckSum := NewCommand(fmt.Sprintf("wget -qO- %s/v%s/%s", KubeEdgeDownloadURL, version, checksumFilename))
-		if err := getDesiredCheckSum.Exec(); err != nil {
-			return false, err
-		}
-
-		if getDesiredCheckSum.GetStdOut() != actualChecksum {
-			fmt.Printf("Failed to verify the checksum of %s ... \n\n", filename)
-			return false, nil
-		}
-	}
-
-	return true, nil
-}
-
-func retryDownload(filename, checksumFilename string, version semver.Version, tarballPath string) error {
-	filePath := filepath.Join(tarballPath, filename)
-	for try := 0; try < downloadRetryTimes; try++ {
-		//Download the tar from repo
-		dwnldURL := fmt.Sprintf("cd %s && wget -k --no-check-certificate --progress=bar:force %s/v%s/%s",
-			tarballPath, KubeEdgeDownloadURL, version, filename)
-		if err := NewCommand(dwnldURL).Exec(); err != nil {
-			return err
-		}
-
-		//Verify the tar with checksum
-		success, err := checkSum(filename, checksumFilename, version, tarballPath)
-		if err != nil {
-			return err
-		}
-		if success {
+	for {
+		header, err := tr.Next()
+		switch {
+		case err == io.EOF:
 			return nil
-		}
-		fmt.Printf("Failed to verify the checksum of %s, try to download it again ... \n\n", filename)
-		//Cleanup the downloaded files
-		if err = NewCommand(fmt.Sprintf("rm -f %s", filePath)).Exec(); err != nil {
+		case err != nil:
 			return err
+		case header == nil:
+			continue
+		}
+
+		target := filepath.Join(dest, header.Name)
+		switch header.Typeflag {
+		case tar.TypeDir:
+			if _, err := os.Stat(target); err != nil {
+				if err := os.MkdirAll(target, os.FileMode(header.Mode)); err != nil {
+					return err
+				}
+			}
+		case tar.TypeReg:
+			writer, err := os.Create(target)
+			if err != nil {
+				return err
+			}
+			if _, err := io.Copy(writer, tr); err != nil {
+				writer.Close() // Close the file explicitly here in case of an error
+				return err
+			}
+			writer.Close() // Close the file explicitly after successful write
 		}
 	}
-	return fmt.Errorf("failed to download %s", filename)
 }
 
-// Compress compresses folders or files
 func Compress(tarName string, paths []string) error {
 	tarFile, err := os.Create(tarName)
 	if err != nil {
@@ -723,7 +350,7 @@ func Compress(tarName string, paths []string) error {
 			if err := tw.WriteHeader(hdr); err != nil {
 				return err
 			}
-			// if path is a dir, dont continue
+			// if path is a dir, don't continue
 			if finfo.Mode().IsDir() {
 				return nil
 			}
@@ -754,6 +381,151 @@ func Compress(tarName string, paths []string) error {
 		}
 	}
 	return nil
+}
+
+// keadmVersion returns the version of the client without metadata.
+func keadmVersion(info string) (string, error) {
+	v, err := versionutil.ParseSemantic(info)
+	if err != nil {
+		return "", fmt.Errorf("keadm version error: %v", err)
+	}
+	// There is no utility in versionutil to get the version without the metadata,
+	// so this needs some manual formatting.
+	// Discard offsets after a release label and keep the labels down to e.g. `alpha.0` instead of
+	// including the offset e.g. `alpha.0.206`. This is done to comply with GCR image tags.
+	pre := v.PreRelease()
+	patch := v.Patch()
+	if len(pre) > 0 {
+		if patch > 0 {
+			// If the patch version is more than zero, decrement it and remove the label.
+			// this is done to comply with the latest stable patch release.
+			patch = patch - 1
+			pre = ""
+		} else {
+			split := strings.Split(pre, ".")
+			if len(split) > 2 {
+				pre = split[0] + "." + split[1] // Exclude the third element
+			} else if len(split) < 2 {
+				pre = split[0] + ".0" // Append .0 to a partial label
+			}
+			pre = "-" + pre
+		}
+	}
+	vStr := fmt.Sprintf("v%d.%d.%d%s", v.Major(), v.Minor(), patch, pre)
+	return vStr, nil
+}
+
+// Validate if the remote version is one Minor release newer than the client version.
+// This is done to conform with "stable-X" and only allow remote versions from
+// the same Patch level release.
+func validateStableVersion(remoteVersion, clientVersion string) (string, error) {
+	verRemote, err := versionutil.ParseGeneric(remoteVersion)
+	if err != nil {
+		return "", fmt.Errorf("remote version error: %v", err)
+	}
+	verClient, err := versionutil.ParseGeneric(clientVersion)
+	if err != nil {
+		return "", fmt.Errorf("client version error: %v", err)
+	}
+	// If the remote Major version is bigger or if the Major versions are the same,
+	// but the remote Minor is bigger use the client version release. This handles Major bumps too.
+	if verClient.Major() < verRemote.Major() ||
+		(verClient.Major() == verRemote.Major()) && verClient.Minor() < verRemote.Minor() {
+		klog.Infof("remote version is much newer: %s; falling back to: %s", remoteVersion, clientVersion)
+		return clientVersion, nil
+	}
+	return remoteVersion, nil
+}
+
+// GetHelmVersion returns the verified version of Helm. If the verification fails,
+// obtain the remote version first and then use the default value
+func GetHelmVersion(version string, retryTimes int) string {
+	if kubeReleaseRegex.MatchString(version) {
+		return strings.TrimPrefix(version, "v")
+	}
+
+	for i := 0; i < retryTimes; i++ {
+		v, err := GetLatestVersion()
+		if err != nil {
+			fmt.Println("Failed to get the latest KubeEdge release version, error: ", err)
+			continue
+		}
+		if v != "" {
+			// do not obtain remote version again
+			return GetHelmVersion(v, 0)
+		}
+	}
+	// returns default version
+	fmt.Println("Failed to get the latest KubeEdge release version, will use default version: ", types.DefaultKubeEdgeVersion)
+	return types.DefaultKubeEdgeVersion
+}
+
+// BuildConfig builds config from flags
+func BuildConfig(kubeConfig, master string) (conf *rest.Config, err error) {
+	config, err := clientcmd.BuildConfigFromFlags(master, kubeConfig)
+	if err != nil {
+		return nil, err
+	}
+
+	return config, nil
+}
+
+// isK8SComponentInstalled checks if said K8S version is already installed in the host
+func isK8SComponentInstalled(kubeConfig, master string) error {
+	config, err := BuildConfig(kubeConfig, master)
+	if err != nil {
+		return fmt.Errorf("failed to build config, err: %v", err)
+	}
+
+	discoveryClient, err := discovery.NewDiscoveryClientForConfig(config)
+	if err != nil {
+		return fmt.Errorf("failed to init discovery client, err: %v", err)
+	}
+
+	discoveryClient.RESTClient().Post()
+	serverVersion, err := discoveryClient.ServerVersion()
+	if err != nil {
+		return fmt.Errorf("failed to get the version of K8s master, please check whether K8s was successfully installed, err: %v", err)
+	}
+
+	return checkKubernetesVersion(serverVersion)
+}
+
+func checkKubernetesVersion(serverVersion *version.Info) error {
+	reg := regexp.MustCompile(`[[:digit:]]*`)
+	minorVersion := reg.FindString(serverVersion.Minor)
+
+	k8sMinorVersion, err := strconv.Atoi(minorVersion)
+	if err != nil {
+		return fmt.Errorf("could not parse the minor version of K8s, error: %s", err)
+	}
+	if k8sMinorVersion >= types.DefaultK8SMinimumVersion {
+		return nil
+	}
+
+	return fmt.Errorf("your minor version of K8s is lower than %d, please reinstall newer version", types.DefaultK8SMinimumVersion)
+}
+
+// computeSHA512Checksum returns the SHA512 checksum of the given file
+func computeSHA512Checksum(filepath string) (string, error) {
+	f, err := os.Open(filepath)
+	if err != nil {
+		return "", err
+	}
+
+	defer func() {
+		err := f.Close()
+		if err != nil {
+			fmt.Printf("failed to close file, path: %v, error: %v \n", filepath, err)
+		}
+	}()
+
+	h := sha512.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", err
+	}
+
+	return fmt.Sprintf("%x", h.Sum(nil)), nil
 }
 
 func askForconfirm() (bool, error) {
@@ -873,5 +645,59 @@ func downloadServiceFile(componentType types.ComponentType, version semver.Versi
 			fmt.Printf("[Run as service] service file already exisits in %s, skip download\n", ServiceFilePath)
 		}
 	}
+	return nil
+}
+
+func ReportTaskResult(config *v1alpha2.EdgeCoreConfig, taskType, taskID string, event fsm.Event) error {
+	resp := &commontypes.NodeTaskResponse{
+		NodeName: config.Modules.Edged.HostnameOverride,
+		Event:    event.Type,
+		Action:   event.Action,
+		Time:     time.Now().UTC().Format(time.RFC3339),
+		Reason:   event.Msg,
+	}
+	edgeHub := config.Modules.EdgeHub
+	var caCrt []byte
+	caCertPath := edgeHub.TLSCAFile
+	caCrt, err := os.ReadFile(caCertPath)
+	if err != nil {
+		return fmt.Errorf("failed to read ca: %v", err)
+	}
+
+	rootCAs := x509.NewCertPool()
+	rootCAs.AppendCertsFromPEM(caCrt)
+
+	certFile := edgeHub.TLSCertFile
+	keyFile := edgeHub.TLSPrivateKeyFile
+	cliCrt, err := tls.LoadX509KeyPair(certFile, keyFile)
+
+	transport := &http.Transport{
+		DialContext: (&net.Dialer{
+			Timeout:   30 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		// use TLS configuration
+		TLSClientConfig: &tls.Config{
+			RootCAs:            rootCAs,
+			InsecureSkipVerify: false,
+			Certificates:       []tls.Certificate{cliCrt},
+		},
+	}
+
+	client := &http.Client{Transport: transport, Timeout: 30 * time.Second}
+
+	respData, err := json.Marshal(resp)
+	if err != nil {
+		return fmt.Errorf("marshal failed: %v", err)
+	}
+	url := edgeHub.HTTPServer + fmt.Sprintf("/task/%s/name/%s/node/%s/status", taskType, taskID, config.Modules.Edged.HostnameOverride)
+	result, err := client.Post(url, "application/json", bytes.NewReader(respData))
+
+	if err != nil {
+		return fmt.Errorf("post http request failed: %v", err)
+	}
+	klog.Error("report result ", result)
+	defer result.Body.Close()
+
 	return nil
 }

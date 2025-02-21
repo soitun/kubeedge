@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 /*
@@ -22,15 +23,15 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/pkg/errors"
+
+	v1 "k8s.io/api/core/v1"
+	"k8s.io/utils/ptr"
+
 	kubeadmapi "k8s.io/kubernetes/cmd/kubeadm/app/apis/kubeadm"
 	kubeadmconstants "k8s.io/kubernetes/cmd/kubeadm/app/constants"
 	certphase "k8s.io/kubernetes/cmd/kubeadm/app/phases/certs"
 	"k8s.io/kubernetes/cmd/kubeadm/app/util/users"
-
-	v1 "k8s.io/api/core/v1"
-	"k8s.io/utils/pointer"
-
-	"github.com/pkg/errors"
 )
 
 type pathOwnerAndPermissionsUpdaterFunc func(path string, uid, gid int64, perms uint32) error
@@ -139,7 +140,7 @@ func runKubeControllerManagerAsNonRoot(pod *v1.Pod, runAsUser, runAsGroup, suppl
 		}
 	}
 	pod.Spec.Containers[0].SecurityContext = &v1.SecurityContext{
-		AllowPrivilegeEscalation: pointer.Bool(false),
+		AllowPrivilegeEscalation: ptr.To(false),
 		Capabilities: &v1.Capabilities{
 			// We drop all capabilities that are added by default.
 			Drop: []v1.Capability{"ALL"},
@@ -158,7 +159,7 @@ func runKubeSchedulerAsNonRoot(pod *v1.Pod, runAsUser, runAsGroup *int64, update
 		return err
 	}
 	pod.Spec.Containers[0].SecurityContext = &v1.SecurityContext{
-		AllowPrivilegeEscalation: pointer.Bool(false),
+		AllowPrivilegeEscalation: ptr.To(false),
 		// We drop all capabilities that are added by default.
 		Capabilities: &v1.Capabilities{
 			Drop: []v1.Capability{"ALL"},
@@ -183,7 +184,7 @@ func runEtcdAsNonRoot(pod *v1.Pod, runAsUser, runAsGroup *int64, updatePathOwner
 		return err
 	}
 	pod.Spec.Containers[0].SecurityContext = &v1.SecurityContext{
-		AllowPrivilegeEscalation: pointer.Bool(false),
+		AllowPrivilegeEscalation: ptr.To(false),
 		// We drop all capabilities that are added by default.
 		Capabilities: &v1.Capabilities{
 			Drop: []v1.Capability{"ALL"},

@@ -1,3 +1,4 @@
+//go:build windows
 // +build windows
 
 /*
@@ -19,11 +20,9 @@ limitations under the License.
 package winstats
 
 import (
-	"errors"
-	"fmt"
 	"os"
-	"os/exec"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -31,9 +30,16 @@ import (
 	"unsafe"
 
 	cadvisorapi "github.com/google/cadvisor/info/v1"
+	"github.com/pkg/errors"
 	"golang.org/x/sys/windows"
+	"golang.org/x/sys/windows/registry"
 	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/klog/v2"
+)
+
+const (
+	bootIdRegistry = `SYSTEM\CurrentControlSet\Control\Session Manager\Memory Management\PrefetchParameters`
+	bootIdKey      = `BootId`
 )
 
 // MemoryStatusEx is the same as Windows structure MEMORYSTATUSEX
@@ -143,11 +149,17 @@ func (p *perfCounterNodeStatsClient) getMachineInfo() (*cadvisorapi.MachineInfo,
 		return nil, err
 	}
 
+	bootId, err := getBootID()
+	if err != nil {
+		return nil, err
+	}
+
 	return &cadvisorapi.MachineInfo{
-		NumCores:       processorCount(),
+		NumCores:       ProcessorCount(),
 		MemoryCapacity: p.nodeInfo.memoryPhysicalCapacityBytes,
 		MachineID:      hostname,
 		SystemUUID:     systemUUID,
+		BootID:         bootId,
 	}, nil
 }
 
@@ -159,7 +171,7 @@ func (p *perfCounterNodeStatsClient) getMachineInfo() (*cadvisorapi.MachineInfo,
 // more notes for this issue:
 // same issue in moby: https://github.com/moby/moby/issues/38935#issuecomment-744638345
 // solution in hcsshim: https://github.com/microsoft/hcsshim/blob/master/internal/processorinfo/processor_count.go
-func processorCount() int {
+func ProcessorCount() int {
 	if amount := getActiveProcessorCount(allProcessorGroups); amount != 0 {
 		return int(amount)
 	}
@@ -188,9 +200,9 @@ func (p *perfCounterNodeStatsClient) getNodeInfo() nodeInfo {
 	return p.nodeInfo
 }
 
-func (p *perfCounterNodeStatsClient) collectMetricsData(cpuCounter, memWorkingSetCounter, memCommittedBytesCounter *perfCounter, networkAdapterCounter *networkCounter) {
+func (p *perfCounterNodeStatsClient) collectMetricsData(cpuCounter, memWorkingSetCounter, memCommittedBytesCounter perfCounter, networkAdapterCounter *networkCounter) {
 	cpuValue, err := cpuCounter.getData()
-	cpuCores := runtime.NumCPU()
+	cpuCores := ProcessorCount()
 	if err != nil {
 		klog.ErrorS(err, "Unable to get cpu perf counter data")
 		return
@@ -236,20 +248,27 @@ func (p *perfCounterNodeStatsClient) convertCPUValue(cpuCores int, cpuValue uint
 
 func (p *perfCounterNodeStatsClient) getCPUUsageNanoCores() uint64 {
 	cachePeriodSeconds := uint64(defaultCachePeriod / time.Second)
-	cpuUsageNanoCores := (p.cpuUsageCoreNanoSecondsCache.latestValue - p.cpuUsageCoreNanoSecondsCache.previousValue) / cachePeriodSeconds
+	perfCounterUpdatePeriodSeconds := uint64(perfCounterUpdatePeriod / time.Second)
+	cpuUsageNanoCores := ((p.cpuUsageCoreNanoSecondsCache.latestValue - p.cpuUsageCoreNanoSecondsCache.previousValue) * perfCounterUpdatePeriodSeconds) / cachePeriodSeconds
 	return cpuUsageNanoCores
 }
 
 func getSystemUUID() (string, error) {
-	result, err := exec.Command("wmic", "csproduct", "get", "UUID").Output()
+	k, err := registry.OpenKey(registry.LOCAL_MACHINE, `SYSTEM\HardwareConfig`, registry.QUERY_VALUE)
 	if err != nil {
-		return "", err
+		return "", errors.Wrap(err, "failed to open registry key HKLM\\SYSTEM\\HardwareConfig")
 	}
-	fields := strings.Fields(string(result))
-	if len(fields) != 2 {
-		return "", fmt.Errorf("received unexpected value retrieving vm uuid: %q", string(result))
+	defer k.Close()
+
+	uuid, _, err := k.GetStringValue("LastConfig")
+	if err != nil {
+		return "", errors.Wrap(err, "failed to read registry value LastConfig from key HKLM\\SYSTEM\\HardwareConfig")
 	}
-	return fields[1], nil
+
+	uuid = strings.Trim(uuid, "{")
+	uuid = strings.Trim(uuid, "}")
+	uuid = strings.ToUpper(uuid)
+	return uuid, nil
 }
 
 func getPhysicallyInstalledSystemMemoryBytes() (uint64, error) {
@@ -273,4 +292,17 @@ func getPhysicallyInstalledSystemMemoryBytes() (uint64, error) {
 	}
 
 	return statex.TotalPhys, nil
+}
+
+func getBootID() (string, error) {
+	regKey, err := registry.OpenKey(registry.LOCAL_MACHINE, bootIdRegistry, registry.READ)
+	if err != nil {
+		return "", err
+	}
+	defer regKey.Close()
+	regValue, _, err := regKey.GetIntegerValue(bootIdKey)
+	if err != nil {
+		return "", err
+	}
+	return strconv.FormatUint(regValue, 10), nil
 }

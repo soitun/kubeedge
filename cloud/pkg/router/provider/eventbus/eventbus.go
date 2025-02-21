@@ -7,13 +7,15 @@ import (
 
 	"k8s.io/klog/v2"
 
+	v1 "github.com/kubeedge/api/apis/rules/v1"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
+	"github.com/kubeedge/kubeedge/cloud/pkg/cloudhub"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/listener"
 	"github.com/kubeedge/kubeedge/cloud/pkg/router/provider"
-	v1 "github.com/kubeedge/kubeedge/pkg/apis/rules/v1"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 )
 
 const (
@@ -62,7 +64,7 @@ func (factory *eventbusFactory) GetSource(ep *v1.RuleEndpoint, sourceResource ma
 func (eb *EventBus) RegisterListener(handle listener.Handle) error {
 	listener.MessageHandlerInstance.AddListener(path.Join("bus/node", eb.nodeName, eb.namespace, eb.subTopic), handle)
 	msg := model.NewMessage("")
-	msg.SetResourceOperation(path.Join("node", eb.nodeName, eb.namespace, eb.subTopic), "subscribe")
+	msg.SetResourceOperation(path.Join("node", eb.nodeName, eb.namespace, eb.subTopic), message.OperationSubscribe)
 	msg.SetRoute(modules.RouterSourceEventBus, modules.UserGroup)
 	beehiveContext.Send(modules.CloudHubModuleName, *msg)
 	return nil
@@ -70,7 +72,7 @@ func (eb *EventBus) RegisterListener(handle listener.Handle) error {
 
 func (eb *EventBus) UnregisterListener() {
 	msg := model.NewMessage("")
-	msg.SetResourceOperation(path.Join("node", eb.nodeName, eb.namespace, eb.subTopic), "unsubscribe")
+	msg.SetResourceOperation(path.Join("node", eb.nodeName, eb.namespace, eb.subTopic), message.OperationUnsubscribe)
 	msg.SetRoute(modules.RouterSourceEventBus, modules.UserGroup)
 	beehiveContext.Send(modules.CloudHubModuleName, *msg)
 	listener.MessageHandlerInstance.RemoveListener(path.Join("bus/node", eb.nodeName, eb.namespace, eb.subTopic))
@@ -103,7 +105,7 @@ func (*EventBus) Forward(target provider.Target, data interface{}) (response int
 	content, err := message.GetContentData()
 	if !ok {
 		klog.Errorf("get message %s content err: %v", message.GetID(), err)
-		return nil, fmt.Errorf("get message %s contant err: %v", message.GetID(), err)
+		return nil, fmt.Errorf("get message %s content err: %v", message.GetID(), err)
 	}
 	res["data"] = content
 	resp, err := target.GoToTarget(res, nil)
@@ -115,7 +117,7 @@ func (*EventBus) Forward(target provider.Target, data interface{}) (response int
 	return resp, nil
 }
 
-func (eb *EventBus) GoToTarget(data map[string]interface{}, stop chan struct{}) (interface{}, error) {
+func (eb *EventBus) GoToTarget(data map[string]interface{}, _ chan struct{}) (interface{}, error) {
 	messageID, ok := data["messageID"].(string)
 	if !ok {
 		return nil, buildAndLogError("messageID")
@@ -142,6 +144,14 @@ func (eb *EventBus) GoToTarget(data map[string]interface{}, stop chan struct{}) 
 	msg.SetResourceOperation(resource, publishOperation)
 	msg.FillBody(string(body))
 	msg.SetRoute(modules.RouterSourceEventBus, modules.UserGroup)
+
+	sessionMgr, err := cloudhub.GetSessionManager()
+	if err != nil {
+		return nil, err
+	}
+	if _, exists := sessionMgr.GetSession(nodeName); !exists {
+		return nil, fmt.Errorf("cloudcore doesn't have session for node:%s", nodeName)
+	}
 	beehiveContext.Send(modules.CloudHubModuleName, *msg)
 	return nil, nil
 }

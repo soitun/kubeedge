@@ -19,21 +19,21 @@ package manager
 import (
 	"os"
 	"reflect"
-	"sync"
 	"testing"
 
 	v1 "k8s.io/api/core/v1"
+	"k8s.io/apimachinery/pkg/api/meta"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
+	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/client"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/informers"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
 )
 
-func TestPodManager_isPodUpdated(t *testing.T) {
+func TestIsPodUpdated(t *testing.T) {
 	type args struct {
-		old *CachePod
+		old *v1.Pod
 		new *v1.Pod
 	}
 	tests := []struct {
@@ -44,10 +44,7 @@ func TestPodManager_isPodUpdated(t *testing.T) {
 		{
 			"TestPodManager_isPodUpdated(): Case 1: check different pod",
 			args{
-				&CachePod{
-					ObjectMeta: TestOldPodObject.ObjectMeta,
-					Spec:       TestOldPodObject.Spec,
-				},
+				TestOldPodObject,
 				TestNewPodObject,
 			},
 			true,
@@ -55,10 +52,7 @@ func TestPodManager_isPodUpdated(t *testing.T) {
 		{
 			"TestPodManager_isPodUpdated(): Case 2: check same pod",
 			args{
-				&CachePod{
-					ObjectMeta: TestOldPodObject.ObjectMeta,
-					Spec:       TestOldPodObject.Spec,
-				},
+				TestOldPodObject,
 				TestOldPodObject,
 			},
 			false,
@@ -66,12 +60,7 @@ func TestPodManager_isPodUpdated(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			pm := &PodManager{
-				realEvents:   make(chan watch.Event, 1),
-				mergedEvents: make(chan watch.Event, 1),
-				pods:         sync.Map{},
-			}
-			if got := pm.isPodUpdated(tt.args.old, tt.args.new); got != tt.want {
+			if got := isPodUpdated(*tt.args.old, *tt.args.new); got != tt.want {
 				t.Errorf("PodManager.isPodUpdated() = %v, want %v", got, tt.want)
 			}
 		})
@@ -82,7 +71,6 @@ func TestPodManager_merge(t *testing.T) {
 	type fields struct {
 		realEvents   chan watch.Event
 		mergedEvents chan watch.Event
-		pods         *CachePod
 	}
 	type args struct {
 		event watch.Event
@@ -97,7 +85,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         nil,
 			},
 			args{
 				event: watch.Event{Type: watch.Added, Object: TestOldPodObject},
@@ -108,7 +95,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         nil,
 			},
 			args{
 				event: watch.Event{Type: watch.Added, Object: TestDeletingPodObject},
@@ -119,7 +105,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         &CachePod{ObjectMeta: TestOldPodObject.ObjectMeta, Spec: TestOldPodObject.Spec},
 			},
 			args{
 				event: watch.Event{Type: watch.Modified, Object: TestNewPodObject},
@@ -130,7 +115,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         &CachePod{ObjectMeta: TestOldPodObject.ObjectMeta, Spec: TestOldPodObject.Spec},
 			},
 			args{
 				event: watch.Event{Type: watch.Modified, Object: TestOldPodObject},
@@ -141,7 +125,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         nil,
 			},
 			args{
 				event: watch.Event{Type: watch.Modified, Object: TestNewPodObject},
@@ -152,7 +135,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         &CachePod{ObjectMeta: TestOldPodObject.ObjectMeta, Spec: TestOldPodObject.Spec},
 			},
 			args{
 				event: watch.Event{Type: watch.Deleted, Object: TestOldPodObject},
@@ -163,7 +145,6 @@ func TestPodManager_merge(t *testing.T) {
 			fields{
 				realEvents:   make(chan watch.Event, 1),
 				mergedEvents: make(chan watch.Event, 1),
-				pods:         nil,
 			},
 			args{
 				event: watch.Event{Type: "InvalidType", Object: TestOldPodObject},
@@ -175,11 +156,6 @@ func TestPodManager_merge(t *testing.T) {
 			pm := &PodManager{
 				realEvents:   tt.fields.realEvents,
 				mergedEvents: tt.fields.mergedEvents,
-				pods:         sync.Map{},
-			}
-
-			if tt.fields.pods != nil {
-				pm.pods.Store(tt.fields.pods.GetUID(), tt.fields.pods)
 			}
 
 			tt.fields.realEvents <- tt.args.event
@@ -213,7 +189,6 @@ func TestPodManager_Events(t *testing.T) {
 			pm := &PodManager{
 				realEvents:   tt.fields.realEvents,
 				mergedEvents: tt.fields.mergedEvents,
-				pods:         sync.Map{},
 			}
 			if got := pm.Events(); !reflect.DeepEqual(got, tt.want) {
 				t.Errorf("PodManager.Events() = %v, want %v", got, tt.want)
@@ -246,7 +221,9 @@ func TestNewPodManager(t *testing.T) {
 		QPS:         100,
 		Burst:       200,
 		ContentType: "application/vnd.kubernetes.protobuf",
-	})
+	}, false)
+
+	client.DefaultGetRestMapper = func() (mapper meta.RESTMapper, err error) { return nil, nil }
 
 	tests := []struct {
 		name string
@@ -255,7 +232,7 @@ func TestNewPodManager(t *testing.T) {
 		{
 			"TestNewPodManager(): Case 1: with nodename",
 			args{
-				informers.GetInformersManager().GetK8sInformerFactory().Core().V1().Pods().Informer(),
+				informers.GetInformersManager().GetKubeInformerFactory().Core().V1().Pods().Informer(),
 			},
 		},
 	}

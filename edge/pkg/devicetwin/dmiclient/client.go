@@ -26,10 +26,10 @@ import (
 	"google.golang.org/grpc"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/devices/v1beta1"
+	dmiapi "github.com/kubeedge/api/apis/dmi/v1beta1"
 	deviceconst "github.com/kubeedge/kubeedge/cloud/pkg/devicecontroller/constants"
 	"github.com/kubeedge/kubeedge/edge/pkg/devicetwin/dtcommon"
-	"github.com/kubeedge/kubeedge/pkg/apis/devices/v1alpha2"
-	dmiapi "github.com/kubeedge/kubeedge/pkg/apis/dmi/v1alpha1"
 )
 
 type DMIClient struct {
@@ -82,7 +82,7 @@ func (dc *DMIClient) close() {
 	dc.CancelFunc()
 }
 
-func createDeviceRequest(device *v1alpha2.Device) (*dmiapi.RegisterDeviceRequest, error) {
+func createDeviceRequest(device *v1beta1.Device) (*dmiapi.RegisterDeviceRequest, error) {
 	d, err := dtcommon.ConvertDevice(device)
 	if err != nil {
 		return nil, err
@@ -93,13 +93,14 @@ func createDeviceRequest(device *v1alpha2.Device) (*dmiapi.RegisterDeviceRequest
 	}, nil
 }
 
-func removeDeviceRequest(deviceName string) (*dmiapi.RemoveDeviceRequest, error) {
+func removeDeviceRequest(device *v1beta1.Device) (*dmiapi.RemoveDeviceRequest, error) {
 	return &dmiapi.RemoveDeviceRequest{
-		DeviceName: deviceName,
+		DeviceName:      device.Name,
+		DeviceNamespace: device.Namespace,
 	}, nil
 }
 
-func updateDeviceRequest(device *v1alpha2.Device) (*dmiapi.UpdateDeviceRequest, error) {
+func updateDeviceRequest(device *v1beta1.Device) (*dmiapi.UpdateDeviceRequest, error) {
 	d, err := dtcommon.ConvertDevice(device)
 	if err != nil {
 		return nil, err
@@ -110,7 +111,7 @@ func updateDeviceRequest(device *v1alpha2.Device) (*dmiapi.UpdateDeviceRequest, 
 	}, nil
 }
 
-func createDeviceModelRequest(model *v1alpha2.DeviceModel) (*dmiapi.CreateDeviceModelRequest, error) {
+func createDeviceModelRequest(model *v1beta1.DeviceModel) (*dmiapi.CreateDeviceModelRequest, error) {
 	m, err := dtcommon.ConvertDeviceModel(model)
 	if err != nil {
 		return nil, err
@@ -121,7 +122,7 @@ func createDeviceModelRequest(model *v1alpha2.DeviceModel) (*dmiapi.CreateDevice
 	}, nil
 }
 
-func updateDeviceModelRequest(model *v1alpha2.DeviceModel) (*dmiapi.UpdateDeviceModelRequest, error) {
+func updateDeviceModelRequest(model *v1beta1.DeviceModel) (*dmiapi.UpdateDeviceModelRequest, error) {
 	m, err := dtcommon.ConvertDeviceModel(model)
 	if err != nil {
 		return nil, err
@@ -132,9 +133,10 @@ func updateDeviceModelRequest(model *v1alpha2.DeviceModel) (*dmiapi.UpdateDevice
 	}, nil
 }
 
-func removeDeviceModelRequest(deviceModelName string) (*dmiapi.RemoveDeviceModelRequest, error) {
+func removeDeviceModelRequest(deviceModel *v1beta1.DeviceModel) (*dmiapi.RemoveDeviceModelRequest, error) {
 	return &dmiapi.RemoveDeviceModelRequest{
-		ModelName: deviceModelName,
+		ModelName:      deviceModel.Name,
+		ModelNamespace: deviceModel.Namespace,
 	}, nil
 }
 
@@ -179,11 +181,8 @@ func (dcs *DMIClients) getDMIClientConn(protocol string) (*DMIClient, error) {
 	return dc, nil
 }
 
-func (dcs *DMIClients) RegisterDevice(device *v1alpha2.Device) error {
-	protocol, err := dtcommon.GetProtocolNameOfDevice(device)
-	if err != nil {
-		return err
-	}
+func (dcs *DMIClients) RegisterDevice(device *v1beta1.Device) error {
+	protocol := device.Spec.Protocol.ProtocolName
 
 	dc, err := dcs.getDMIClientConn(protocol)
 	if err != nil {
@@ -203,11 +202,8 @@ func (dcs *DMIClients) RegisterDevice(device *v1alpha2.Device) error {
 	return nil
 }
 
-func (dcs *DMIClients) RemoveDevice(device *v1alpha2.Device) error {
-	protocol, err := dtcommon.GetProtocolNameOfDevice(device)
-	if err != nil {
-		return err
-	}
+func (dcs *DMIClients) RemoveDevice(device *v1beta1.Device) error {
+	protocol := device.Spec.Protocol.ProtocolName
 
 	dc, err := dcs.getDMIClientConn(protocol)
 	if err != nil {
@@ -216,7 +212,7 @@ func (dcs *DMIClients) RemoveDevice(device *v1alpha2.Device) error {
 
 	defer dc.close()
 
-	rdr, err := removeDeviceRequest(device.Name)
+	rdr, err := removeDeviceRequest(device)
 	if err != nil {
 		return fmt.Errorf("fail to generate RemoveDeviceRequest for device %s with err: %v", device.Name, err)
 	}
@@ -227,11 +223,8 @@ func (dcs *DMIClients) RemoveDevice(device *v1alpha2.Device) error {
 	return nil
 }
 
-func (dcs *DMIClients) UpdateDevice(device *v1alpha2.Device) error {
-	protocol, err := dtcommon.GetProtocolNameOfDevice(device)
-	if err != nil {
-		return err
-	}
+func (dcs *DMIClients) UpdateDevice(device *v1beta1.Device) error {
+	protocol := device.Spec.Protocol.ProtocolName
 
 	dc, err := dcs.getDMIClientConn(protocol)
 	if err != nil {
@@ -251,7 +244,7 @@ func (dcs *DMIClients) UpdateDevice(device *v1alpha2.Device) error {
 	return nil
 }
 
-func (dcs *DMIClients) CreateDeviceModel(model *v1alpha2.DeviceModel) error {
+func (dcs *DMIClients) CreateDeviceModel(model *v1beta1.DeviceModel) error {
 	protocol := model.Spec.Protocol
 	dc, err := dcs.getDMIClientConn(protocol)
 	if err != nil {
@@ -271,7 +264,7 @@ func (dcs *DMIClients) CreateDeviceModel(model *v1alpha2.DeviceModel) error {
 	return nil
 }
 
-func (dcs *DMIClients) RemoveDeviceModel(model *v1alpha2.DeviceModel) error {
+func (dcs *DMIClients) RemoveDeviceModel(model *v1beta1.DeviceModel) error {
 	protocol := model.Spec.Protocol
 	dc, err := dcs.getDMIClientConn(protocol)
 	if err != nil {
@@ -280,7 +273,7 @@ func (dcs *DMIClients) RemoveDeviceModel(model *v1alpha2.DeviceModel) error {
 
 	defer dc.close()
 
-	rdmr, err := removeDeviceModelRequest(model.Name)
+	rdmr, err := removeDeviceModelRequest(model)
 	if err != nil {
 		return fmt.Errorf("fail to create RemoveDeviceModelRequest for device model %s with err: %v", model.Name, err)
 	}
@@ -291,7 +284,7 @@ func (dcs *DMIClients) RemoveDeviceModel(model *v1alpha2.DeviceModel) error {
 	return nil
 }
 
-func (dcs *DMIClients) UpdateDeviceModel(model *v1alpha2.DeviceModel) error {
+func (dcs *DMIClients) UpdateDeviceModel(model *v1beta1.DeviceModel) error {
 	protocol := model.Spec.Protocol
 	dc, err := dcs.getDMIClientConn(protocol)
 	if err != nil {

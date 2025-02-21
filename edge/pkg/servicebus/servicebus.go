@@ -10,19 +10,20 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/klog/v2"
 
+	"github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core"
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	beehiveModel "github.com/kubeedge/beehive/pkg/core/model"
 	commonType "github.com/kubeedge/kubeedge/common/types"
+	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
 	servicebusConfig "github.com/kubeedge/kubeedge/edge/pkg/servicebus/config"
 	"github.com/kubeedge/kubeedge/edge/pkg/servicebus/dao"
 	"github.com/kubeedge/kubeedge/edge/pkg/servicebus/util"
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 var (
@@ -123,12 +124,12 @@ func processMessage(msg *beehiveModel.Message) {
 	}
 	resource := msg.GetResource()
 	switch msg.GetOperation() {
-	case "start":
+	case message.OperationStart:
+		dao.InsertUrls(resource)
 		if atomic.CompareAndSwapInt32(&inited, 0, 1) {
-			dao.InsertUrls(resource)
 			go server(c)
 		}
-	case "stop":
+	case message.OperationStop:
 		dao.DeleteUrlsByKey(resource)
 		if dao.IsTableEmpty() {
 			c <- struct{}{}

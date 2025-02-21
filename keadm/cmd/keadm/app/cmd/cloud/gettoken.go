@@ -1,3 +1,19 @@
+/*
+Copyright 2022 The KubeEdge Authors.
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+*/
+
 package cloud
 
 import (
@@ -48,7 +64,7 @@ func NewGettoken() *cobra.Command {
 }
 
 func addGettokenFlags(cmd *cobra.Command, gettokenOptions *common.GettokenOptions) {
-	cmd.Flags().StringVar(&gettokenOptions.Kubeconfig, common.KubeConfig, gettokenOptions.Kubeconfig,
+	cmd.Flags().StringVar(&gettokenOptions.Kubeconfig, common.FlagNameKubeConfig, gettokenOptions.Kubeconfig,
 		"Use this key to set kube-config path, eg: $HOME/.kube/config")
 }
 
@@ -74,7 +90,7 @@ func queryToken(namespace string, name string, kubeConfigPath string) ([]byte, e
 
 // showToken prints the token
 func showToken(data []byte) error {
-	_, err := fmt.Printf(string(data))
+	_, err := fmt.Println(string(data))
 	if err != nil {
 		return err
 	}

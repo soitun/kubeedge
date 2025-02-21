@@ -9,14 +9,15 @@ import (
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/message"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/modules"
+	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao"
 )
 
-//SecretsGetter is interface to get client secrets
+// SecretsGetter is interface to get client secrets
 type SecretsGetter interface {
 	Secrets(namespace string) SecretsInterface
 }
 
-//SecretsInterface is interface for client secret
+// SecretsInterface is interface for client secret
 type SecretsInterface interface {
 	Create(*api.Secret) (*api.Secret, error)
 	Update(*api.Secret) error
@@ -36,51 +37,51 @@ func newSecrets(namespace string, s SendInterface) *secrets {
 	}
 }
 
-func (c *secrets) Create(cm *api.Secret) (*api.Secret, error) {
+func (c *secrets) Create(*api.Secret) (*api.Secret, error) {
 	return nil, nil
 }
 
-func (c *secrets) Update(cm *api.Secret) error {
+func (c *secrets) Update(*api.Secret) error {
 	return nil
 }
 
-func (c *secrets) Delete(name string) error {
+func (c *secrets) Delete(string) error {
 	return nil
 }
 
 func (c *secrets) Get(name string) (*api.Secret, error) {
 	resource := fmt.Sprintf("%s/%s/%s", c.namespace, model.ResourceTypeSecret, name)
 	secretMsg := message.BuildMsg(modules.MetaGroup, "", modules.EdgedModuleName, resource, model.QueryOperation, nil)
-	msg, err := c.send.SendSync(secretMsg)
-	if err != nil {
-		return nil, fmt.Errorf("get secret from metaManager failed, err: %v", err)
+	remoteGet := func() (*api.Secret, error) {
+		msg, err := c.send.SendSync(secretMsg)
+		if err != nil {
+			return nil, fmt.Errorf("get secret from metaManager failed, err: %v", err)
+		}
+		errContent, ok := msg.GetContent().(error)
+		if ok {
+			return nil, errContent
+		}
+		content, err := msg.GetContentData()
+		if err != nil {
+			return nil, fmt.Errorf("parse message to secret failed, err: %v", err)
+		}
+		return handleSecretFromMetaManager(content)
 	}
 
-	content, err := msg.GetContentData()
-	if err != nil {
-		return nil, fmt.Errorf("parse message to secret failed, err: %v", err)
+	metas, err := dao.QueryMeta("key", resource)
+	if err != nil || len(*metas) == 0 {
+		return remoteGet()
 	}
-
-	if msg.GetOperation() == model.ResponseOperation && msg.GetSource() == modules.MetaManagerModuleName {
-		return handleSecretFromMetaDB(content)
-	}
-	//else
-	return handleSecretFromMetaManager(content)
+	return handleSecretFromMetaDB(metas)
 }
 
-func handleSecretFromMetaDB(content []byte) (*api.Secret, error) {
-	var lists []string
-	err := json.Unmarshal(content, &lists)
-	if err != nil {
-		return nil, fmt.Errorf("unmarshal message to secret list from db failed, err: %v", err)
-	}
-
-	if len(lists) != 1 {
-		return nil, fmt.Errorf("secret length from meta db is %d", len(lists))
+func handleSecretFromMetaDB(lists *[]string) (*api.Secret, error) {
+	if len(*lists) != 1 {
+		return nil, fmt.Errorf("secret length from meta db is %d", len(*lists))
 	}
 
 	var secret api.Secret
-	err = json.Unmarshal([]byte(lists[0]), &secret)
+	err := json.Unmarshal([]byte((*lists)[0]), &secret)
 	if err != nil {
 		return nil, fmt.Errorf("unmarshal message to secret from db failed, err: %v", err)
 	}

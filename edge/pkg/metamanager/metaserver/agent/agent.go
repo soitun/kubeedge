@@ -26,45 +26,57 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/util/wait"
 	apirequest "k8s.io/apiserver/pkg/endpoints/request"
+	"k8s.io/client-go/util/workqueue"
 	"k8s.io/klog/v2"
 
 	beehiveContext "github.com/kubeedge/beehive/pkg/core/context"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/cloud/pkg/common/modules"
+	connect "github.com/kubeedge/kubeedge/edge/pkg/common/cloudconnection"
 	edgemodule "github.com/kubeedge/kubeedge/edge/pkg/common/modules"
+	metaserverconfig "github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/config"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
 )
+
+var DefaultAgent = NewApplicationAgent()
 
 // Agent used for generating application and do apply
 type Agent struct {
 	Applications sync.Map //store struct application
-	nodeName     string
+	// watchSyncQueue store the watch request sync message
+	watchSyncQueue workqueue.RateLimitingInterface
 }
 
 // NewApplicationAgent create edge agent for list/watch
-func NewApplicationAgent(nodeName string) *Agent {
-	defaultAgent := &Agent{nodeName: nodeName}
+func NewApplicationAgent() *Agent {
+	defaultAgent := &Agent{
+		watchSyncQueue: workqueue.NewRateLimitingQueue(workqueue.DefaultControllerRateLimiter()),
+	}
 
 	go wait.Until(func() {
 		defaultAgent.GC()
 	}, time.Minute*5, beehiveContext.Done())
 
+	go defaultAgent.watchSync()
+
 	return defaultAgent
 }
 
 func (a *Agent) Generate(ctx context.Context, verb metaserver.ApplicationVerb, option interface{}, obj runtime.Object) (*metaserver.Application, error) {
+	// If the connection is lost between EdgeCore and CloudCore, we do not generate
+	// the application since we can not send the application to the CloudCore
+	if !connect.IsConnected() {
+		return nil, connect.ErrConnectionLost
+	}
+
 	key, err := metaserver.KeyFuncReq(ctx, "")
 	if err != nil {
-		klog.Errorf("%v", err)
 		return nil, err
 	}
 
-	info, ok := apirequest.RequestInfoFrom(ctx)
-	if !ok || !info.IsResourceRequest {
-		klog.Errorf("no request info in context")
-		return nil, fmt.Errorf("no request info in context")
-	}
-	app, err := metaserver.NewApplication(ctx, key, verb, a.nodeName, info.Subresource, option, obj)
+	info, _ := apirequest.RequestInfoFrom(ctx)
+
+	app, err := metaserver.NewApplication(ctx, key, verb, metaserverconfig.Config.NodeName, info.Subresource, option, obj)
 	if err != nil {
 		return nil, err
 	}
@@ -109,7 +121,7 @@ func (a *Agent) Apply(app *metaserver.Application) error {
 }
 
 func (a *Agent) doApply(app *metaserver.Application) {
-	defer app.Call()
+	defer app.Cancel()
 	// encapsulate as a message
 	app.Status = metaserver.InApplying
 	msg := model.NewMessage("").SetRoute(metaserver.MetaServerSource, modules.DynamicControllerModuleGroup).FillBody(app)
@@ -120,6 +132,7 @@ func (a *Agent) doApply(app *metaserver.Application) {
 		app.Reason = fmt.Sprintf("failed to access cloud Application center: %v", err)
 		return
 	}
+
 	retApp, err := metaserver.MsgToApplication(resp)
 	if err != nil {
 		app.Status = metaserver.Failed
@@ -134,6 +147,11 @@ func (a *Agent) doApply(app *metaserver.Application) {
 	app.RespBody = retApp.RespBody
 }
 
+func (a *Agent) CloseApplication(appID string) {
+	a.Applications.Delete(appID)
+	a.SyncWatchAppOnConnected()
+}
+
 func (a *Agent) GC() {
 	a.Applications.Range(func(key, value interface{}) bool {
 		app := value.(*metaserver.Application)
@@ -143,4 +161,68 @@ func (a *Agent) GC() {
 		}
 		return true
 	})
+}
+
+func (a *Agent) SyncWatchAppOnConnected() {
+	a.watchSyncQueue.Add("SyncWatchApp")
+}
+
+func (a *Agent) watchSync() {
+	for a.processNextWorkItem() {
+	}
+}
+
+func (a *Agent) processNextWorkItem() bool {
+	key, quit := a.watchSyncQueue.Get()
+	if quit {
+		return false
+	}
+	defer a.watchSyncQueue.Done(key)
+
+	err := a.syncWatchApplications()
+	if err == nil {
+		a.watchSyncQueue.Forget(key)
+		return true
+	}
+
+	a.watchSyncQueue.AddRateLimited(key)
+	return true
+}
+
+func (a *Agent) syncWatchApplications() error {
+	watchApps := a.listWatchApplications()
+
+	msg := model.NewMessage("").SetRoute(metaserver.MetaServerSource, modules.DynamicControllerModuleGroup).FillBody(watchApps)
+	msg.SetResourceOperation(metaserver.WatchAppSync, "null")
+
+	resp, err := beehiveContext.SendSync(edgemodule.EdgeHubModuleName, *msg, 10*time.Second)
+	if err != nil {
+		klog.Errorf("syncWatchApplications SendSync msg err: %v", err)
+		return err
+	}
+
+	failedWatchApps, err := metaserver.MsgToApplications(resp)
+	if err != nil {
+		klog.Errorf("syncWatchApplications MsgToApplications err: %v", err)
+		return err
+	}
+
+	klog.Errorf("failed to process watch apps: %+v", failedWatchApps)
+
+	return nil
+}
+
+func (a *Agent) listWatchApplications() map[string]metaserver.Application {
+	watchApps := make(map[string]metaserver.Application)
+	a.Applications.Range(func(key, value interface{}) bool {
+		app := value.(*metaserver.Application)
+		if app.Verb != metaserver.Watch {
+			return true
+		}
+
+		watchApps[app.ID] = *app
+		return true
+	})
+
+	return watchApps
 }

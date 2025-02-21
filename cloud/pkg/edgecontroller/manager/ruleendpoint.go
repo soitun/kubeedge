@@ -4,7 +4,7 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/tools/cache"
 
-	"github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
+	"github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 // RuleEndpointManager manage all events of rule by SharedInformer
@@ -20,7 +20,7 @@ func (rem *RuleEndpointManager) Events() chan watch.Event {
 // NewRuleEndpointManager create RuleEndpointManager by SharedIndexInformer
 func NewRuleEndpointManager(config *v1alpha1.EdgeController, si cache.SharedIndexInformer) (*RuleEndpointManager, error) {
 	events := make(chan watch.Event, config.Buffer.RuleEndpointsEvent)
-	rh := NewCommonResourceEventHandler(events)
+	rh := NewCommonResourceEventHandler(events, nil)
 	si.AddEventHandler(rh)
 
 	return &RuleEndpointManager{events: events}, nil

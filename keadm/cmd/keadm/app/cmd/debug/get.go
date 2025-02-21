@@ -20,7 +20,7 @@ import (
 	"os"
 	"strings"
 
-	"github.com/astaxie/beego/orm"
+	"github.com/beego/beego/v2/client/orm"
 	"github.com/spf13/cobra"
 	v1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/meta"
@@ -34,12 +34,12 @@ import (
 	printersinternal "k8s.io/kubernetes/pkg/printers/internalversion"
 	"k8s.io/kubernetes/pkg/printers/storage"
 
+	edgecoreCfg "github.com/kubeedge/api/apis/componentconfig/edgecore/v1alpha2"
 	"github.com/kubeedge/beehive/pkg/core/model"
 	"github.com/kubeedge/kubeedge/common/constants"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/dbm"
 	"github.com/kubeedge/kubeedge/edge/pkg/common/util"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao"
-	edgecoreCfg "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/edgecore/v1alpha2"
 )
 
 const (
@@ -467,10 +467,13 @@ func InitDB(driverName, dbName, dataSource string) error {
 	orm.RegisterModel(new(dao.Meta))
 
 	// create orm
-	dbm.DBAccess = orm.NewOrm()
-	if err := dbm.DBAccess.Using(dbName); err != nil {
-		return fmt.Errorf("using db access error %v ", err)
-	}
+	defer func() {
+		if err := recover(); err != nil {
+			fmt.Printf("using db access error as %v", err)
+			return
+		}
+	}()
+	dbm.DBAccess = orm.NewOrmUsingDB(dbName)
 	return nil
 }
 

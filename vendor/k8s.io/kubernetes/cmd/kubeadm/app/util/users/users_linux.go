@@ -1,3 +1,4 @@
+//go:build linux
 // +build linux
 
 /*
@@ -30,11 +31,11 @@ import (
 	"syscall"
 	"time"
 
-	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"github.com/pkg/errors"
 
 	"k8s.io/klog/v2"
 
-	"github.com/pkg/errors"
+	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 )
 
 // EntryMap holds a map of user or group entries.
@@ -128,7 +129,7 @@ func (u *EntryMap) String() string {
 	return strings.Join(lines, "")
 }
 
-// Is a public wrapper around addUsersAndGroupsImpl with default system file paths.
+// AddUsersAndGroups is a public wrapper around addUsersAndGroupsImpl with default system file paths.
 func AddUsersAndGroups() (*UsersAndGroups, error) {
 	return addUsersAndGroupsImpl(fileEtcLoginDefs, fileEtcPasswd, fileEtcGroup)
 }
@@ -148,11 +149,11 @@ func addUsersAndGroupsImpl(pathLoginDef, pathUsers, pathGroups string) (*UsersAn
 	var loginDef string
 	f, close, err := openFileWithLock(pathLoginDef)
 	if err != nil {
-		klog.V(1).Info("Could not open %q, using default system limits: %v", pathLoginDef, err)
+		klog.V(1).Infof("Could not open %q, using default system limits: %v", pathLoginDef, err)
 	} else {
 		loginDef, err = readFile(f)
 		if err != nil {
-			klog.V(1).Info("Could not read %q, using default system limits: %v", pathLoginDef, err)
+			klog.V(1).Infof("Could not read %q, using default system limits: %v", pathLoginDef, err)
 		}
 		close()
 	}

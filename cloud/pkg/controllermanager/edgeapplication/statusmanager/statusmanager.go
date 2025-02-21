@@ -18,9 +18,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/manager"
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
+	appsv1alpha1 "github.com/kubeedge/api/apis/apps/v1alpha1"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/overridemanager"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/utils"
-	appsv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/apps/v1alpha1"
 )
 
 type StatusManager interface {
@@ -64,7 +64,7 @@ func (s *statusManager) WatchStatus(info utils.ResourceInfo) error {
 	select {
 	case s.watchCh <- infoToGVK(info):
 	default:
-		return fmt.Errorf("the wathCh of status manager is full, drop the info %s", info.String())
+		return fmt.Errorf("the watchCh of status manager is full, drop the info %s", info.String())
 	}
 
 	return nil
@@ -86,7 +86,7 @@ func (s *statusManager) CancelWatch(info utils.ResourceInfo) error {
 
 func (s *statusManager) Start() error {
 	if s.reconcileTrigger == nil {
-		return fmt.Errorf("reoncileTriger cannot be nil")
+		return fmt.Errorf("reconcileTrigger cannot be nil")
 	}
 	s.started = true
 	go s.watchStatusWorker()
@@ -183,10 +183,8 @@ func (s *statusManager) startToWatch(ctx context.Context, gvk schema.GroupVersio
 
 	watchObj := &unstructured.Unstructured{}
 	watchObj.SetGroupVersionKind(gvk)
-	if err := controller.Watch(&source.Kind{Type: watchObj}, &handler.EnqueueRequestForOwner{
-		OwnerType:    &appsv1alpha1.EdgeApplication{},
-		IsController: true,
-	}); err != nil {
+	hdler := handler.TypedEnqueueRequestForOwner[client.Object](s.mgr.GetScheme(), s.mgr.GetRESTMapper(), &appsv1alpha1.EdgeApplication{}, handler.OnlyControllerOwner())
+	if err := controller.Watch(source.Kind[client.Object](s.mgr.GetCache(), watchObj, hdler)); err != nil {
 		klog.Errorf("failed to add delete event watch to controller for gvk: %s, %v", gvk, err)
 		return err
 	}
@@ -205,7 +203,7 @@ func (s *statusManager) startToWatch(ctx context.Context, gvk schema.GroupVersio
 func (s *statusManager) watchControllersGC() {
 	edgeAppList := &appsv1alpha1.EdgeApplicationList{}
 	if err := s.client.List(s.ctx, edgeAppList); err != nil {
-		klog.Errorf("failed to list EdgeApplication")
+		klog.Errorf("failed to list EdgeApplication, %v", err)
 		return
 	}
 

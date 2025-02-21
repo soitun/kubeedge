@@ -5,7 +5,7 @@ Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
 
-    http://www.apache.org/licenses/LICENSE-2.0
+	http://www.apache.org/licenses/LICENSE-2.0
 
 Unless required by applicable law or agreed to in writing, software
 distributed under the License is distributed on an "AS IS" BASIS,
@@ -18,6 +18,7 @@ KubeEdge Authors:
 - This File is drive from kubernetes/staging/src/k8s.io/apiserver/pkg/storage/etcd3/store.go
 - Refactor to adapter imitator
 */
+
 package sqlite
 
 import (
@@ -33,8 +34,10 @@ import (
 	"k8s.io/klog/v2"
 
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/dao/v2"
+	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/agent"
 	"github.com/kubeedge/kubeedge/edge/pkg/metamanager/metaserver/kubernetes/storage/sqlite/imitator"
 	"github.com/kubeedge/kubeedge/pkg/metaserver"
+	"github.com/kubeedge/kubeedge/pkg/metaserver/util"
 )
 
 const (
@@ -146,6 +149,10 @@ func (wc *watchChan) run() {
 }
 
 func (wc *watchChan) Stop() {
+	applicationID := util.ApplicationIDValue(wc.ctx)
+	if len(applicationID) != 0 {
+		agent.DefaultAgent.CloseApplication(applicationID)
+	}
 	wc.cancel()
 }
 

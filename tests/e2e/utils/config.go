@@ -13,19 +13,18 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.
 */
+
 package utils
 
 import (
 	"flag"
 	"math/rand"
-	"os"
 	"time"
 
-	"k8s.io/client-go/tools/clientcmd"
 	cliflag "k8s.io/component-base/cli/flag"
 )
 
-//config.json decode struct
+// Config decode struct
 type Config struct {
 	AppImageURL                    []string `json:"image_url"`
 	K8SMasterForKubeEdge           string   `json:"k8smasterforkubeedge"`
@@ -35,7 +34,7 @@ type Config struct {
 	EdgeImageURL                   string   `json:"edgeimageurl"`
 	ControllerStubPort             int      `json:"controllerstubport"`
 	Protocol                       string   `json:"protocol"`
-	KubeConfigPath                 string   `json:"kubeconfigpath"`
+	TestDevice                     bool
 }
 
 // config struct
@@ -43,9 +42,8 @@ var config Config
 var Flags = flag.NewFlagSet("", flag.ContinueOnError)
 
 func RegisterFlags(flags *flag.FlagSet) {
-	flags.StringVar(&config.KubeConfigPath, "kubeconfig", os.Getenv(clientcmd.RecommendedConfigPathEnvVar), "Path to kubeconfig containing embedded authinfo.")
 	flags.Var(cliflag.NewStringSlice(&config.AppImageURL), "image-url", "image url list for e2e")
-	flags.StringVar(&config.K8SMasterForKubeEdge, "kube-master", "", "the kubernetes master address")
+	flags.BoolVar(&config.TestDevice, "test-with-device", true, "whether test edge device")
 }
 
 func CopyFlags(source *flag.FlagSet, target *flag.FlagSet) {

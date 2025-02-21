@@ -19,20 +19,22 @@ package config
 import (
 	"sync"
 
-	configv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/componentconfig/cloudcore/v1alpha1"
+	configv1alpha1 "github.com/kubeedge/api/apis/componentconfig/cloudcore/v1alpha1"
 )
 
 var Config Configure
 var once sync.Once
 
 type Configure struct {
-	DynamicController *configv1alpha1.DynamicController
+	DynamicController   *configv1alpha1.DynamicController
+	EnableAuthorization bool
 }
 
-func InitConfigure(dc *configv1alpha1.DynamicController) {
+func InitConfigure(dc *configv1alpha1.DynamicController, enableAuthorization bool) {
 	once.Do(func() {
 		Config = Configure{
-			DynamicController: dc,
+			DynamicController:   dc,
+			EnableAuthorization: enableAuthorization,
 		}
 	})
 }

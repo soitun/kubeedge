@@ -18,32 +18,32 @@ package util
 
 import (
 	"fmt"
-	"io/ioutil"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
 	"time"
 
-	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"github.com/pkg/errors"
 
 	netutil "k8s.io/apimachinery/pkg/util/net"
 	versionutil "k8s.io/apimachinery/pkg/util/version"
 	pkgversion "k8s.io/component-base/version"
 	"k8s.io/klog/v2"
 
-	"github.com/pkg/errors"
+	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
 )
 
 const (
-	getReleaseVersionTimeout = time.Duration(10 * time.Second)
+	getReleaseVersionTimeout = 10 * time.Second
 )
 
 var (
 	kubeReleaseBucketURL  = "https://dl.k8s.io"
 	kubeCIBucketURL       = "https://storage.googleapis.com/k8s-release-dev"
-	kubeReleaseRegex      = regexp.MustCompile(`^v?(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)([-0-9a-zA-Z_\.+]*)?$`)
-	kubeReleaseLabelRegex = regexp.MustCompile(`^((latest|stable)+(-[1-9](\.[1-9]([0-9])?)?)?)\z`)
-	kubeBucketPrefixes    = regexp.MustCompile(`^((release|ci|ci-cross)/)?([-\w_\.+]+)$`)
+	kubeReleaseRegex      = regexp.MustCompile(`^v?(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)([-\w.+]*)?$`)
+	kubeReleaseLabelRegex = regexp.MustCompile(`^((latest|stable)+(-[1-9](\.[1-9](\d)?)?)?)\z`)
+	kubeBucketPrefixes    = regexp.MustCompile(`^((release|ci)/)?([-\w.+]+)$`)
 )
 
 // KubernetesReleaseVersion is helper function that can fetch
@@ -57,12 +57,13 @@ var (
 // servers and then return actual semantic version.
 //
 // Available names on release servers:
-//  stable      (latest stable release)
-//  stable-1    (latest stable release in 1.x)
-//  stable-1.0  (and similarly 1.1, 1.2, 1.3, ...)
-//  latest      (latest release, including alpha/beta)
-//  latest-1    (latest release in 1.x, including alpha/beta)
-//  latest-1.0  (and similarly 1.1, 1.2, 1.3, ...)
+//
+//	stable      (latest stable release)
+//	stable-1    (latest stable release in 1.x)
+//	stable-1.0  (and similarly 1.1, 1.2, 1.3, ...)
+//	latest      (latest release, including alpha/beta)
+//	latest-1    (latest release in 1.x, including alpha/beta)
+//	latest-1.0  (and similarly 1.1, 1.2, 1.3, ...)
 func KubernetesReleaseVersion(version string) (string, error) {
 	return kubernetesReleaseVersion(version, fetchFromURL)
 }
@@ -134,7 +135,7 @@ func kubernetesReleaseVersion(version string, fetcher func(string, time.Duration
 // Current usage is for CI images where all of symbols except '+' are valid,
 // but function is for generic usage where input can't be always pre-validated.
 func KubernetesVersionToImageTag(version string) string {
-	allowed := regexp.MustCompile(`[^-a-zA-Z0-9_\.]`)
+	allowed := regexp.MustCompile(`[^-\w.]`)
 	return allowed.ReplaceAllString(version, "_")
 }
 
@@ -190,7 +191,7 @@ func fetchFromURL(url string, timeout time.Duration) (string, error) {
 		return "", errors.Errorf("unable to get URL %q: %s", url, err.Error())
 	}
 	defer resp.Body.Close()
-	body, err := ioutil.ReadAll(resp.Body)
+	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return "", errors.Errorf("unable to read content of URL %q: %s", url, err.Error())
 	}

@@ -26,6 +26,7 @@ import (
 	"strings"
 
 	utilnet "k8s.io/apimachinery/pkg/util/net"
+	nodeutil "k8s.io/component-helpers/node/util"
 	"k8s.io/kubernetes/pkg/apis/core/validation"
 
 	"github.com/kubeedge/kubeedge/common/constants"
@@ -98,7 +99,7 @@ func ValidateNodeIP(nodeIP net.IP) error {
 	return fmt.Errorf("node IP: %q not found in the host's network interfaces", nodeIP.String())
 }
 
-//Command executes command and returns output
+// Command executes command and returns output
 func Command(name string, arg []string) (string, error) {
 	cmd := exec.Command(name, arg...)
 	ret, err := cmd.Output()
@@ -108,7 +109,7 @@ func Command(name string, arg []string) (string, error) {
 	return strings.Trim(string(ret), "\n"), nil
 }
 
-//GetCurPath returns filepath
+// GetCurPath returns filepath
 func GetCurPath() string {
 	file, _ := exec.LookPath(os.Args[0])
 	path, _ := filepath.Abs(file)
@@ -131,7 +132,7 @@ func SpliceErrors(errors []error) string {
 
 // GetHostname returns a reasonable hostname
 func GetHostname() string {
-	hostnameOverride, err := os.Hostname()
+	hostnameOverride, err := nodeutil.GetHostname("")
 	if err != nil {
 		return constants.DefaultHostnameOverride
 	}
@@ -149,4 +150,9 @@ func ConcatStrings(ss ...string) string {
 		bff.WriteString(s)
 	}
 	return bff.String()
+}
+
+// GetResourceID return resource ID
+func GetResourceID(namespace, name string) string {
+	return namespace + "/" + name
 }

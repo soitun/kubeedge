@@ -16,10 +16,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/event"
 
+	appsv1alpha1 "github.com/kubeedge/api/apis/apps/v1alpha1"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/constants"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/overridemanager"
 	"github.com/kubeedge/kubeedge/cloud/pkg/controllermanager/edgeapplication/utils"
-	appsv1alpha1 "github.com/kubeedge/kubeedge/pkg/apis/apps/v1alpha1"
 )
 
 type statusReconciler struct {
@@ -50,7 +50,7 @@ func (r *statusReconciler) Reconcile(ctx context.Context, request controllerrunt
 func (r *statusReconciler) sync(ctx context.Context, edgeApp *appsv1alpha1.EdgeApplication) (controllerruntime.Result, error) {
 	tmplInfos, err := utils.GetTemplatesInfosOfEdgeApp(edgeApp, r.Serializer)
 	if err != nil {
-		klog.Errorf("failed to get infos of templates in edgeApp %s/%s, continue with what has been got", edgeApp.Namespace, edgeApp.Name, err)
+		klog.Errorf("failed to get infos of templates in edgeApp %s/%s, continue with what has been got, err: %v", edgeApp.Namespace, edgeApp.Name, err)
 	}
 
 	for _, tmplInfo := range tmplInfos {
@@ -70,17 +70,17 @@ func (r *statusReconciler) sync(ctx context.Context, edgeApp *appsv1alpha1.EdgeA
 			// each nodegroup. Currently, only NameOverrider is applied.
 			overrideInfos := utils.GetAllOverriders(edgeApp)
 			for _, overrideInfo := range overrideInfos {
-				copy := tmpl.DeepCopy()
-				if err := r.Overrider.ApplyOverrides(copy, overrideInfo); err != nil {
+				tmplCopy := tmpl.DeepCopy()
+				if err := r.Overrider.ApplyOverrides(tmplCopy, overrideInfo); err != nil {
 					klog.Errorf("failed to apply overrides to template %s/%s of gvk %s when updating status of edgeapp %s/%s, %v",
-						copy.GetNamespace(), copy.GetName(), gvk, edgeApp.Namespace, edgeApp.Name, err)
+						tmplCopy.GetNamespace(), tmplCopy.GetName(), gvk, edgeApp.Namespace, edgeApp.Name, err)
 					continue
 				}
 				// TODO:
 				// Currently, only deployment will be override. So, we just use the deploymentAvailable here.
-				// It a temporary strategy for convinence. When we need to support more GVK, a generic strategy
+				// It a temporary strategy for convenience. When we need to support more GVK, a generic strategy
 				// is needed.
-				newTmplInfo := &utils.TemplateInfo{Ordinal: tmplInfo.Ordinal, Template: copy}
+				newTmplInfo := &utils.TemplateInfo{Ordinal: tmplInfo.Ordinal, Template: tmplCopy}
 				if err := r.updateStatus(ctx, edgeApp, newTmplInfo, deploymentAvailable{}); err != nil {
 					klog.Errorf("failed to update status for edgeApp %s/%s, %v", edgeApp.Namespace, edgeApp.Name, err)
 					return controllerruntime.Result{Requeue: true}, err
@@ -90,7 +90,7 @@ func (r *statusReconciler) sync(ctx context.Context, edgeApp *appsv1alpha1.EdgeA
 	}
 	// Trigger reconciliation of edgeapplication controller
 	// Considering that if an object created by edgeapplication controller is deleted by others,
-	// only this controller watches its event, thus if it status in edgeapplication resource is unchanged,
+	// only this controller watches its event, thus if it's status in edgeapplication resource is unchanged,
 	// the deleted object will not be created until the next resync.
 	r.ReoncileTriggerChan <- event.GenericEvent{Object: edgeApp.DeepCopy()}
 	return controllerruntime.Result{}, nil

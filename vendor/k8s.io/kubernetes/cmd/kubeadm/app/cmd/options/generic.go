@@ -19,12 +19,12 @@ package options
 import (
 	"strings"
 
-	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
-	"k8s.io/kubernetes/cmd/kubeadm/app/features"
+	"github.com/spf13/pflag"
 
 	cliflag "k8s.io/component-base/cli/flag"
 
-	"github.com/spf13/pflag"
+	"k8s.io/kubernetes/cmd/kubeadm/app/constants"
+	"k8s.io/kubernetes/cmd/kubeadm/app/features"
 )
 
 // AddKubeConfigFlag adds the --kubeconfig flag to the given flagset
@@ -54,6 +54,9 @@ func AddIgnorePreflightErrorsFlag(fs *pflag.FlagSet, ignorePreflightErrors *[]st
 
 // AddControlPlanExtraArgsFlags adds the ExtraArgs flags for control plane components
 func AddControlPlanExtraArgsFlags(fs *pflag.FlagSet, apiServerExtraArgs, controllerManagerExtraArgs, schedulerExtraArgs *map[string]string) {
+	// TODO: https://github.com/kubernetes/kubeadm/issues/1601
+	// Either deprecate these flags or handle duplicate keys.
+	// Currently the map[string]string returned by NewMapStringString() doesn't allow this.
 	fs.Var(cliflag.NewMapStringString(apiServerExtraArgs), APIServerExtraArgs, "A set of extra flags to pass to the API Server or override default ones in form of <flagname>=<value>")
 	fs.Var(cliflag.NewMapStringString(controllerManagerExtraArgs), ControllerManagerExtraArgs, "A set of extra flags to pass to the Controller Manager or override default ones in form of <flagname>=<value>")
 	fs.Var(cliflag.NewMapStringString(schedulerExtraArgs), SchedulerExtraArgs, "A set of extra flags to pass to the Scheduler or override default ones in form of <flagname>=<value>")
@@ -96,13 +99,10 @@ func AddPatchesFlag(fs *pflag.FlagSet, patchesDir *string) {
 	const usage = `Path to a directory that contains files named ` +
 		`"target[suffix][+patchtype].extension". For example, ` +
 		`"kube-apiserver0+merge.yaml" or just "etcd.json". ` +
-		`"target" can be one of "kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd". ` +
+		`"target" can be one of "kube-apiserver", "kube-controller-manager", "kube-scheduler", "etcd", "kubeletconfiguration". ` +
 		`"patchtype" can be one of "strategic", "merge" or "json" and they match the patch formats ` +
 		`supported by kubectl. The default "patchtype" is "strategic". "extension" must be either ` +
 		`"json" or "yaml". "suffix" is an optional string that can be used to determine ` +
 		`which patches are applied first alpha-numerically.`
 	fs.StringVar(patchesDir, Patches, *patchesDir, usage)
-	// TODO: https://github.com/kubernetes/kubeadm/issues/2046 remove in 1.23
-	fs.StringVar(patchesDir, ExperimentalPatches, *patchesDir, usage)
-	fs.MarkDeprecated(ExperimentalPatches, "This flag will be removed in a future version. Please use '--patches' instead.")
 }
