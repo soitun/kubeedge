@@ -17,6 +17,7 @@
 curpath=$PWD
 echo $PWD
 CONTAINER_RUNTIME=${CONTAINER_RUNTIME:-"containerd"}
+mapper_image=modbus-e2e-mapper:v1.0.0
 
 # build mapper project
 cd ${curpath}/staging/src/github.com/kubeedge/mapper-framework
@@ -53,14 +54,24 @@ go work use ./staging/src/github.com/kubeedge/modbus
 # build modbus mapper image
 cd ${curpath}/staging/src/github.com/kubeedge/modbus
 CGO_ENABLED=0 GOOS=linux go build -o main cmd/main.go && sed -i '/go build/d' Dockerfile_nostream
-docker build -f Dockerfile_nostream -t modbus-e2e-mapper:v1.0.0 . && echo "successfully build test mapper image"
+docker build -f Dockerfile_nostream -t ${mapper_image} . && echo "successfully build test mapper image"
 
 # import images to container-runtime
-docker save -o modbus-mapper.tar modbus-e2e-mapper:v1.0.0
+docker save -o modbus-mapper.tar ${mapper_image}
 
 if [[ "${CONTAINER_RUNTIME}" = "cri-o" ]]; then
-  # Use podman to import the mapper image and change it to the correct name
-  sudo podman load -i modbus-mapper.tar && sudo podman tag localhost/v1.0.0:latest docker.io/library/modbus-e2e-mapper:v1.0.0 && echo "successfully import modbus mapper image to CRI-O"
+  # Keep the short mapper image name used by the e2e deployment.
+  load_output=$(sudo podman load -i modbus-mapper.tar)
+  echo "${load_output}"
+  loaded_image=$(printf '%s\n' "${load_output}" | awk -F': ' '/^Loaded image/ {print $2}' | tail -n 1)
+  if [[ -z "${loaded_image}" ]]; then
+    echo "failed to detect loaded modbus mapper image name"
+    exit 1
+  fi
+  if [[ "${loaded_image}" != "${mapper_image}" ]]; then
+    sudo podman tag "${loaded_image}" "${mapper_image}"
+  fi
+  echo "successfully import modbus mapper image to CRI-O"
 elif [[ "${CONTAINER_RUNTIME}" = "isulad" ]]; then
   sudo isula load -i modbus-mapper.tar && echo "successfully import modbus mapper image to Isulad"
 elif [[ "${CONTAINER_RUNTIME}" = "containerd" ]]; then
